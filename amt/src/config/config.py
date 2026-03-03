@@ -129,6 +129,17 @@ model_cfg = {
     "init_factor": 1.0, # initialization factor for embedding layers
 }
 
+model_cfg["decoder"]["ffnn"] = {
+    "instruments": {
+        "Piano":  0,    # Acoustic Grand Piano
+        "Violin": 40,   # Violin
+    },
+    "pitch_min": 21,    # piano A0
+    "pitch_max": 108,   # piano C8
+    "hidden_dim": 256,
+    "dropout": 0.1,
+    "pos_weight": 10.0, # tune with compute_pos_weight() on training set
+}
 # yapf: enable
 shared_cfg = {
     "PATH": {

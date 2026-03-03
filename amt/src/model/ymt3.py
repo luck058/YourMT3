@@ -22,8 +22,9 @@ import wandb
 from einops import rearrange
 
 from transformers import T5Config
-from model.t5mod import T5EncoderYMT3, T5DecoderYMT3, MultiChannelT5Decoder
+from model.t5mod import T5EncoderYMT3, T5DecoderYMT3, MultiChannelT5Decoder, FFNNPianoRollDecoder
 from model.t5mod_helper import task_cond_dec_generate
+from utils.piano_roll_utils import batch_notes_to_piano_roll
 from model.perceiver_mod import PerceiverTFEncoder
 from model.perceiver_helper import PerceiverTFConfig
 from model.conformer_mod import ConformerYMT3Encoder
@@ -112,7 +113,7 @@ class YourMT3(pl.LightningModule):
 
         # Select Encoder type, Model-specific Config
         assert model_cfg["encoder_type"] in ["t5", "perceiver-tf", "conformer"]
-        assert model_cfg["decoder_type"] in ["t5", "multi-t5"]
+        assert model_cfg["decoder_type"] in ["t5", "multi-t5", "ffnn"]
         self.encoder_type = model_cfg["encoder_type"]  # {"t5", "perceiver-tf", "conformer"}
         self.decoder_type = model_cfg["decoder_type"]  # {"t5", "multi-t5"}
         encoder_config = model_cfg["encoder"][self.encoder_type]  # mutable
@@ -122,17 +123,21 @@ class YourMT3(pl.LightningModule):
         if isinstance(model_cfg["num_max_positions"], str) and model_cfg["num_max_positions"] == 'auto':
             encoder_config["num_max_positions"] = int(model_cfg["feat_length"] +
                                                       self.task_manager.max_task_token_length + 10)
-            decoder_config["num_max_positions"] = int(self.max_total_token_length + 10)
+            if self.decoder_type != "ffnn":
+                decoder_config["num_max_positions"] = int(self.max_total_token_length + 10)
         else:
             assert isinstance(model_cfg["num_max_positions"], int)
             encoder_config["num_max_positions"] = model_cfg["num_max_positions"]
-            decoder_config["num_max_positions"] = model_cfg["num_max_positions"]
-
-        # Select Pre-Encoder and Pre-Decoder type
+            if self.decoder_type != "ffnn":
+                decoder_config["num_max_positions"] = model_cfg["num_max_positions"]
+            
+        # Resolve pre_encoder_type from "default"
         if model_cfg["pre_encoder_type"] == "default":
             model_cfg["pre_encoder_type"] = model_cfg["pre_encoder_type_default"].get(model_cfg["encoder_type"], None)
         elif model_cfg["pre_encoder_type"] in [None, "none", "None", "0"]:
             model_cfg["pre_encoder_type"] = None
+            
+        # Resolve pre_decoder_type from "default"
         if model_cfg["pre_decoder_type"] == "default":
             model_cfg["pre_decoder_type"] = model_cfg["pre_decoder_type_default"].get(model_cfg["encoder_type"]).get(
                 model_cfg["decoder_type"], None)
@@ -199,9 +204,9 @@ class YourMT3(pl.LightningModule):
         # Pre-decoder
         self.pre_decoder = nn.Sequential()
         if self.encoder_type == "perceiver-tf" and self.decoder_type == "t5":
-            t, f, c = pre_enc_output_shape  # perceiver-tf: (110, 128, 128) for 2s
-            encoder_output_shape = (t, encoder_config["num_latents"], encoder_config["d_latent"])  # (T, K, D_source)
-            decoder_input_shape = (t, decoder_config["d_model"])  # (T, D_target)
+            t, f, c = pre_enc_output_shape
+            encoder_output_shape = (t, encoder_config["num_latents"], encoder_config["d_latent"])
+            decoder_input_shape = (t, decoder_config["d_model"])
             proj_layer = get_projection_layer(input_shape=encoder_output_shape,
                                               output_shape=decoder_input_shape,
                                               proj_type=self.pre_decoder_type)
@@ -212,7 +217,6 @@ class YourMT3(pl.LightningModule):
         elif self.encoder_type in ["t5", "conformer"] and self.decoder_type == "t5":
             pass
         elif self.encoder_type == "perceiver-tf" and self.decoder_type == "multi-t5":
-            # NOTE: this is experiemental, only for multi-channel decoding with 13 classes
             assert encoder_config["num_latents"] % decoder_config["num_channels"] == 0
             encoder_output_shape = (encoder_config["num_latents"], encoder_config["d_model"])
             decoder_input_shape = (decoder_config["num_channels"], decoder_config["d_model"])
@@ -220,17 +224,24 @@ class YourMT3(pl.LightningModule):
                                                             output_shape=decoder_input_shape,
                                                             proj_type=self.pre_decoder_type)
             self.pre_decoder.append(proj_layer)
+        elif self.decoder_type == "ffnn":
+            pass  # FFNNPianoRollDecoder reads encoder hidden states directly via its own Linear
         else:
             raise NotImplementedError(
                 f"Encoder type {self.encoder_type} and decoder type {self.decoder_type} is not implemented yet.")
-
         # Positional Encoding, Vocab, etc.
         if self.encoder_type in ["t5", "conformer"]:
-            encoder_config["num_max_positions"] = decoder_config["num_max_positions"] = model_cfg["num_max_positions"]
-        else:  # perceiver-tf uses separate positional encoding
+            encoder_config["num_max_positions"] = model_cfg["num_max_positions"]
+            if self.decoder_type != "ffnn":
+                decoder_config["num_max_positions"] = model_cfg["num_max_positions"]
+        elif self.encoder_type == "perceiver-tf" and self.decoder_type != "ffnn":
             encoder_config["num_max_positions"] = model_cfg["feat_length"]
             decoder_config["num_max_positions"] = model_cfg["num_max_positions"]
-        encoder_config["vocab_size"] = decoder_config["vocab_size"] = model_cfg["vocab_size"]
+        else:  # perceiver-tf + ffnn
+            encoder_config["num_max_positions"] = model_cfg["feat_length"]
+        encoder_config["vocab_size"] = model_cfg["vocab_size"]
+        if self.decoder_type != "ffnn":
+            decoder_config["vocab_size"] = model_cfg["vocab_size"]
 
         # Print and save updated configs
         self.audio_cfg = audio_cfg
@@ -243,11 +254,15 @@ class YourMT3(pl.LightningModule):
         # Encoder and Decoder and LM-head
         self.encoder = None
         self.decoder = None
-        self.lm_head = LMHead(decoder_config, 1.0, model_cfg["tie_word_embeddings"])
-        self.embed_tokens = nn.Embedding(decoder_config["vocab_size"], decoder_config["d_model"])
-        self.embed_tokens.weight.data.normal_(mean=0.0, std=1.0)
+        if self.decoder_type != "ffnn":
+            self.lm_head = LMHead(decoder_config, 1.0, model_cfg["tie_word_embeddings"])
+            self.embed_tokens = nn.Embedding(decoder_config["vocab_size"], decoder_config["d_model"])
+            self.embed_tokens.weight.data.normal_(mean=0.0, std=1.0)
+        else:
+            self.lm_head = None
+            self.embed_tokens = None
         self.shift_right_fn = None
-        self.set_encoder_decoder()  # shift_right_fn is also set here
+        self.set_encoder_decoder()
 
         # Model as ModuleDict
         # self.model = nn.ModuleDict({
@@ -303,10 +318,23 @@ class YourMT3(pl.LightningModule):
             self.decoder = T5DecoderYMT3(self.model_cfg["decoder"]["t5"], t5_config)
         elif self.decoder_type == "multi-t5":
             self.decoder = MultiChannelT5Decoder(self.model_cfg["decoder"]["multi-t5"], t5_config)
+        elif self.decoder_type == "ffnn":
+            ffnn_cfg = self.model_cfg["decoder"]["ffnn"]
+            encoder_d_model = self.model_cfg["encoder"][self.encoder_type]["d_model"]
+            self.decoder = FFNNPianoRollDecoder(
+                d_model=encoder_d_model,
+                instruments=ffnn_cfg["instruments"],
+                pitch_min=ffnn_cfg["pitch_min"],
+                pitch_max=ffnn_cfg["pitch_max"],
+                hidden_dim=ffnn_cfg["hidden_dim"],
+                dropout=ffnn_cfg["dropout"],
+            )
 
-        # `shift_right` function for decoding
-        self.shift_right_fn = self.decoder._shift_right
-
+        # `shift_right` function for autoregressive decoding only
+        if self.decoder_type != "ffnn":
+            self.shift_right_fn = self.decoder._shift_right
+        # ffnn: shift_right_fn stays None (already set in __init__)
+        
     def setup(self, stage: str) -> None:
         # Defining metrics
         if self.hparams.eval_vocab is None:
@@ -405,7 +433,7 @@ class YourMT3(pl.LightningModule):
             self,
             x: torch.FloatTensor,
             target_tokens: torch.LongTensor,
-            # task_tokens: Optional[torch.LongTensor] = None,
+            piano_roll_labels: Optional[torch.FloatTensor] = None,
             **kwargs) -> Dict:
         """ Forward pass with teacher-forcing for training and validation.
         Args:
@@ -432,6 +460,12 @@ class YourMT3(pl.LightningModule):
         enc_hs = self.encoder(inputs_embeds=x)["last_hidden_state"]  # (B, T', D)
         enc_hs = self.pre_decoder(enc_hs)  # (B, T', D) or (B, K, T, D)
 
+        # ADD: ffnn dispatch
+        if self.decoder_type == "ffnn":
+            return self._ffnn_forward(enc_hs, piano_roll_labels)
+
+        # existing t5/multi-t5 code continues unchanged...
+
         # if task_tokens is not None and task_tokens.numel() > 0 and self.use_task_cond_decoder is True:
         #     # append task token to decoder input and output label
         #     labels = torch.cat([task_tokens, target_tokens], dim=2)  # (B, C, task_len + N)
@@ -454,6 +488,28 @@ class YourMT3(pl.LightningModule):
         labels = labels.masked_fill(labels == 0, value=-100)  # ignore pad tokens for loss
         loss_fct = CrossEntropyLoss(ignore_index=-100)
         loss = loss_fct(logits.view(-1, logits.size(-1)), labels.view(-1))
+        return {"logits": logits, "loss": loss}
+    
+    def _ffnn_forward(self,
+                      enc_hs: torch.FloatTensor,
+                      piano_roll_labels: Optional[torch.FloatTensor] = None) -> Dict:
+        """
+        Args:
+            enc_hs:            (B, T', D)
+            piano_roll_labels: (B, T', n_instruments, n_pitches) or None
+        Returns:
+            {"logits": (B, T', n_instruments, n_pitches), "loss": scalar or None}
+        """
+        logits = self.decoder(enc_hs)  # (B, T', n_instruments, n_pitches)
+
+        loss = None
+        if piano_roll_labels is not None:
+            piano_roll_labels = piano_roll_labels.to(logits.device)
+            ffnn_cfg = self.model_cfg["decoder"]["ffnn"]
+            pos_weight = torch.tensor(ffnn_cfg["pos_weight"], device=logits.device)
+            loss_fct = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+            loss = loss_fct(logits, piano_roll_labels)
+
         return {"logits": logits, "loss": loss}
 
     def inference(self,
@@ -478,12 +534,21 @@ class YourMT3(pl.LightningModule):
         # From spectrogram to pre-decoder is the same pipeline as in forward()
         x = self.spectrogram(x)  # mel-/spectrogram: (b, 256, 512) or (B, T, F)
         x = self.pre_encoder(x)  # projection to d_model: (B, 256, 512)
-        if task_tokens is not None and task_tokens.numel() > 0 and self.use_task_cond_encoder is True:
-            # append task embedding to encoder input
-            task_embed = self.embed_tokens(task_tokens)  # (B, task_len, 512)
-            x = torch.cat([task_embed, x], dim=1)  # (B, task_len + 256, 512)
-        enc_hs = self.encoder(inputs_embeds=x)["last_hidden_state"]  # (B, task_len + 256, 512)
-        enc_hs = self.pre_decoder(enc_hs)  # (B, task_len + 256, 512)
+        if (task_tokens is not None
+                and task_tokens.numel() > 0
+                and self.use_task_cond_encoder is True
+                and self.decoder_type != "ffnn"):   # ← ADD this condition
+            task_embed = self.embed_tokens(task_tokens)
+            x = torch.cat([task_embed, x], dim=1)
+        enc_hs = self.encoder(inputs_embeds=x)["last_hidden_state"]
+        enc_hs = self.pre_decoder(enc_hs)
+
+        # ADD: ffnn inference returns a binary piano roll, not token ids
+        if self.decoder_type == "ffnn":
+            logits = self.decoder(enc_hs)                          # (B, T', n_instruments, n_pitches)
+            return (torch.sigmoid(logits) >= 0.5).to(torch.uint8)
+
+        # existing autoregressive path continues unchanged...
 
         # Cached-autoregressive decoding with task token (can be None) as prefix
         if max_token_length is None:
@@ -525,6 +590,12 @@ class YourMT3(pl.LightningModule):
         #         self.task_manager.get_eval_subtask_prefix_dict()[subtask_key]).to(self.device)
 
         n_items = audio_segments.shape[0]
+        if len(notes_dict['notes']) > 0:
+            assert notes_dict['notes'][0].onset >= 0.0, (
+                "notes_dict['notes'] appears to use relative timestamps. "
+                "Pass absolute track-level timestamps, or set start_times=[0.0]*batch_size "
+                "and ensure notes are already sliced to the correct segment."
+            )
         loss = 0.
         pred_token_array_file = []  # each element is (B, C, L) np.ndarray
         x_ps_concat = []
@@ -601,19 +672,31 @@ class YourMT3(pl.LightningModule):
 
             audio_segments = torch.cat([self.pitchshift(a, p[0].item()) for a, p in zip(audio_segments, pshift_steps)],
                                        dim=0)
-
-        loss = self(audio_segments, note_tokens)['loss']
-        self.log('train_loss',
-                 loss,
-                 on_step=True,
-                 on_epoch=True,
-                 prog_bar=True,
-                 batch_size=note_tokens.shape[0],
-                 sync_dist=True)
-        # print('lr', self.trainer.optimizers[0].param_groups[0]['lr'])
-        return loss
+            
+        if self.decoder_type == "ffnn":
+            # piano_roll_labels will be added to batch by AMTDataModule (TODO #1)
+            piano_roll_labels = batch.get("piano_roll_labels", None)
+            loss = self(audio_segments, note_tokens, piano_roll_labels=piano_roll_labels)['loss']
+            self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True,
+                     batch_size=audio_segments.shape[0], sync_dist=True)
+            return loss
+        else:
+            loss = self(audio_segments, note_tokens)['loss']
+            self.log('train_loss',
+                    loss,
+                    on_step=True,
+                    on_epoch=True,
+                    prog_bar=True,
+                    batch_size=note_tokens.shape[0],
+                    sync_dist=True)
+            # print('lr', self.trainer.optimizers[0].param_groups[0]['lr'])
+            return loss
 
     def validation_step(self, batch, batch_idx, dataloader_idx=0) -> Dict:
+        if self.decoder_type == "ffnn":
+            audio_segments, notes_dict, _ = batch
+            self._ffnn_validation_step(audio_segments, notes_dict, dataloader_idx)
+            return dict()
         # File-wise validation
         if self.task_manager.num_decoding_channels == 1:
             bsz = self.shared_cfg["BSZ"]["validation"]
@@ -694,8 +777,55 @@ class YourMT3(pl.LightningModule):
         decoding_time_sec = t.elapsed_time()
         self.log('val_loss', loss, prog_bar=True, batch_size=n_items, sync_dist=True)
         # self.val_metrics[dataloader_idx].bulk_update_errors({'decoding_time': decoding_time_sec})
+    
+    def _ffnn_validation_step(self, audio_segments, notes_dict, dataloader_idx=0) -> None:
+        ffnn_cfg = self.model_cfg["decoder"]["ffnn"]
+        programs = list(ffnn_cfg["instruments"].values())
+        segment_duration = self.audio_cfg["input_frames"] / self.audio_cfg["sample_rate"]
 
+        n_items = audio_segments.shape[0]
+        bsz = self.shared_cfg["BSZ"]["validation"]
+        total_loss = 0.0
+
+        for i in range(0, n_items, bsz):
+            x = audio_segments[i:i + bsz].to(self.device)
+            batch_size = x.shape[0]
+            start_times = [(i + j) * segment_duration for j in range(batch_size)]
+
+            # Run encoder first to get actual T' before building labels
+            with torch.no_grad():
+                x_spec = self.spectrogram(x)
+                x_spec = self.pre_encoder(x_spec)
+                enc_hs = self.encoder(inputs_embeds=x_spec)["last_hidden_state"]
+                enc_hs = self.pre_decoder(enc_hs)  # noop for ffnn, but keeps pipeline consistent
+
+            n_frames = enc_hs.shape[1]  # T' — inferred at runtime, not hardcoded
+
+            piano_roll_labels = batch_notes_to_piano_roll(
+                batch_notes=[notes_dict['notes']] * batch_size,
+                start_times=start_times,
+                duration=segment_duration,
+                programs=programs,
+                n_frames=n_frames,
+                pitch_min=ffnn_cfg["pitch_min"],
+                pitch_max=ffnn_cfg["pitch_max"],
+            ).to(self.device)
+
+            with torch.no_grad():
+                logits = self.decoder(enc_hs)
+                pos_weight = torch.tensor(ffnn_cfg["pos_weight"], device=self.device)
+                loss_fct = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+                loss = loss_fct(logits, piano_roll_labels)
+                total_loss += loss.item() * (batch_size / n_items)
+
+            # TODO: piano_roll_to_note_list() + compute_track_metrics() for F1 (TODO #2)
+
+        self.log('val_loss', total_loss, prog_bar=True, batch_size=n_items, sync_dist=True)
+        
     def on_validation_epoch_end(self) -> None:
+        if self.decoder_type == "ffnn":
+            return  # val_loss already logged per-step in _ffnn_validation_step
+   
         for val_metrics in self.val_metrics:
             self.log_dict(val_metrics.bulk_compute(), sync_dist=True)
             val_metrics.bulk_reset()
@@ -703,6 +833,10 @@ class YourMT3(pl.LightningModule):
         self.val_metrics_macro.bulk_reset()
 
     def test_step(self, batch, batch_idx, dataloader_idx=0) -> Dict:
+        if self.decoder_type == "ffnn":
+            # TODO: implement ffnn test path (convert piano roll → notes → metrics)
+            return dict()
+        
         # File-wise evaluation
         if self.task_manager.num_decoding_channels == 1:
             bsz = self.shared_cfg["BSZ"]["validation"]
