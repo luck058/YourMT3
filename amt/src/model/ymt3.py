@@ -79,6 +79,7 @@ class YourMT3(pl.LightningModule):
             eval_vocab: Optional[Dict] = None,
             eval_drum_vocab: Optional[Dict] = None,
             write_output_dir: Optional[str] = None,
+            write_midi: bool = True,
             write_output_vocab: Optional[Dict] = None,
             onset_tolerance: float = 0.05,
             add_pitch_class_metric: Optional[List[str]] = None,
@@ -904,6 +905,7 @@ class YourMT3(pl.LightningModule):
 
         n_items = audio_segments.shape[0]
         bsz = self.shared_cfg["BSZ"]["validation"]
+        all_pred_notes = []
 
         for i in range(0, n_items, bsz):
             x = audio_segments[i:i + bsz].to(self.device)
@@ -930,6 +932,7 @@ class YourMT3(pl.LightningModule):
                     pitch_min=ffnn_cfg["pitch_min"],
                 )
                 pred_notes = piano_roll_tuples_to_notes(pred_tuples)
+                all_pred_notes.extend(pred_notes)
 
                 ref_notes = [
                     n for n in notes_dict['notes']
@@ -948,6 +951,13 @@ class YourMT3(pl.LightningModule):
                     add_pitch_class_metric=self.hparams.add_pitch_class_metric,
                 )
                 self.test_metrics[dataloader_idx].bulk_update(non_drum_metric)
+
+        if self.hparams.write_midi and self.global_rank == 0:
+            track_id = [notes_dict[k] for k in notes_dict.keys() if k.endswith("_id")][0]
+            dataset_info = [k for k in notes_dict.keys() if k.endswith("_id")][0][:-3]
+            midi_dir = self.hparams.write_output_dir or os.path.join(os.getcwd(), "midi_output")
+            write_model_output_as_midi(all_pred_notes, midi_dir, track_id,
+                                       output_dir_suffix=str(dataset_info))
 
     def test_step(self, batch, batch_idx, dataloader_idx=0) -> Dict:
         if self.decoder_type == "ffnn":

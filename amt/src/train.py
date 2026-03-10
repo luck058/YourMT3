@@ -84,6 +84,7 @@ parser.add_argument('-dwf', '--decoder-ff-widening-factor', type=int, default=No
 parser.add_argument('-tk', '--task', type=str, default='mt3_full_plus', help='tokenizer type (default=gm_ext_plus). See config/task.py for more options.')
 parser.add_argument('-epv', '--eval-program-vocab', type=str, default=None, help='evaluation program vocabulary (default=None). If None, default vocabulary of the data preset will be used.')
 parser.add_argument('-w', '--write-model-output', type=str2bool, default=False, help='write model test output to file (default=False). True or False')
+parser.add_argument('-wm', '--write-midi', type=str2bool, default=True, help='write FFNN decoder test output as MIDI files (default=True). Only used when decoder-type=ffnn.')
 # Trainer configurations
 parser.add_argument('-bsz', '--train-batch-size', nargs=2, type=int, default=None, help='train batch size for sub and local (default=None) per GPU. e.g. "-bsz 6 12". If None, default value defined in config.py will be used.')
 parser.add_argument('-pr','--precision', type=str, default="bf16-mixed", help='precision (default="bf16-mixed") {32, 16, bf16, bf16-mixed}')
@@ -138,10 +139,22 @@ def main():
         eval_program_vocab = data_preset["eval_vocab"]
     eval_drum_vocab = data_preset.get("eval_drum_vocab", None)
 
+    # Build piano_roll_cfg for FFNN decoder training
+    piano_roll_cfg = None
+    if model_cfg.get("decoder_type") == "ffnn":
+        ffnn_cfg = model_cfg["decoder"]["ffnn"]
+        piano_roll_cfg = {
+            "programs":  list(ffnn_cfg["instruments"].values()),
+            "pitch_min": ffnn_cfg["pitch_min"],
+            "pitch_max": ffnn_cfg["pitch_max"],
+            "n_frames":  None,  # computed from audio_cfg in AMTDataModule.setup()
+        }
+
     dm = AMTDataModule(data_preset_multi=data_preset,
                        task_manager=tm,
                        train_num_samples_per_epoch=args.train_num_samples_per_epoch,
                        audio_cfg=audio_cfg,
+                       piano_roll_cfg=piano_roll_cfg,
                        **shared_cfg["AUGMENTATION"])
 
     model = YourMT3(
@@ -157,6 +170,7 @@ def main():
         eval_vocab=eval_program_vocab,
         eval_drum_vocab=eval_drum_vocab,
         write_output_dir=dir_info["lightning_dir"] if args.write_model_output else None,
+        write_midi=args.write_midi,
         add_pitch_class_metric=data_preset.get("add_pitch_class_metric", None))
 
     # if VersionParse(torch.__version__) >= VersionParse("2.1"):
