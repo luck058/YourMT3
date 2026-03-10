@@ -17,6 +17,7 @@ from utils.datasets_train import get_cache_data_loader
 from utils.datasets_eval import get_eval_dataloader
 from utils.datasets_helper import create_merged_train_dataset_info, get_list_of_weighted_random_samplers
 from utils.task_manager import TaskManager
+from utils.piano_roll_utils import compute_n_frames_from_audio_cfg
 from config.config import shared_cfg
 from config.config import audio_cfg as default_audio_cfg
 from config.data_presets import data_preset_single_cfg, data_preset_multi_cfg
@@ -46,7 +47,8 @@ class AMTDataModule(LightningDataModule):
                 "uhat_intra_stem_augment": True,
             },
             train_pitch_shift_range: Optional[List[int]] = None,
-            audio_cfg: Optional[Dict] = None) -> None:
+            audio_cfg: Optional[Dict] = None,
+            piano_roll_cfg: Optional[Dict] = None) -> None:
         super().__init__()
 
         # check path existence
@@ -88,6 +90,9 @@ class AMTDataModule(LightningDataModule):
         # audio config
         self.audio_cfg = audio_cfg if audio_cfg is not None else default_audio_cfg
 
+        # piano roll config for FFNNPianoRollDecoder training (None = disabled)
+        self.piano_roll_cfg = piano_roll_cfg
+
     def set_merged_train_data_info(self) -> None:
         """Collect train datasets and create info...
 
@@ -123,6 +128,14 @@ class AMTDataModule(LightningDataModule):
                                                             dataset_weights=self.train_data_info["dataset_weights"],
                                                             dataset_index_ranges=self.train_data_info["index_ranges"],
                                                             num_samples_per_epoch=actual_train_num_samples_per_epoch)
+            # Resolve piano_roll_cfg: if a partial dict was passed (e.g. without n_frames),
+            # compute n_frames from audio_cfg automatically.
+            resolved_piano_roll_cfg = None
+            if self.piano_roll_cfg is not None:
+                resolved_piano_roll_cfg = dict(self.piano_roll_cfg)
+                if resolved_piano_roll_cfg.get("n_frames") is None:
+                    resolved_piano_roll_cfg["n_frames"] = compute_n_frames_from_audio_cfg(self.audio_cfg)
+
             # Train dataloader arguments
             self.train_data_args = []
             for sampler in samplers:
@@ -139,6 +152,7 @@ class AMTDataModule(LightningDataModule):
                     "shuffle": True,
                     "sampler": sampler,
                     "audio_cfg": self.audio_cfg,
+                    "piano_roll_cfg": resolved_piano_roll_cfg,
                 })
 
             # Validation dataloader arguments

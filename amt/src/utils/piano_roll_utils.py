@@ -13,6 +13,7 @@ piano_roll_utils.py
 Utilities for converting YourMT3's note representations into binary piano roll
 tensors suitable for training and evaluating the FFNNPianoRollDecoder.
 
+The main entry point for training is notes_to_piano_roll(), which converts a
 list of Note objects (from utils/note_event_dataclasses.py) into a binary
 tensor of shape (n_frames, n_instruments, n_pitches).
 
@@ -28,6 +29,8 @@ Data pipeline integration:
 from typing import Dict, List, Tuple
 import torch
 import numpy as np
+
+from utils.note_event_dataclasses import Note
 
 
 def notes_to_piano_roll(
@@ -294,3 +297,49 @@ def piano_roll_to_note_list(
                     notes.append((onset_sec, offset_sec, midi_pitch, program))
 
     return notes
+
+
+def compute_n_frames_from_audio_cfg(audio_cfg: dict) -> int:
+    """
+    Estimate the encoder output time dimension T' from the audio config.
+
+    Uses the torchaudio MelSpectrogram formula with center=True (the default),
+    which pads the signal by n_fft//2 on each side before computing frames.
+    With center=True: T = floor(input_frames / hop_length) + 1.
+
+    This approximation may differ from the actual enc_hs.shape[1] by ±1 if
+    the spectrogram uses different padding. Always verify with the shape
+    assertion in _ffnn_forward().
+
+    Args:
+        audio_cfg: the audio configuration dict from config/config.py.
+    Returns:
+        Estimated number of encoder output frames (T').
+    """
+    return audio_cfg["input_frames"] // audio_cfg["hop_length"] + 1
+
+
+def piano_roll_tuples_to_notes(
+    tuples: List[Tuple[float, float, int, int]],
+) -> List[Note]:
+    """
+    Convert output of piano_roll_to_note_list() to Note objects accepted by
+    compute_track_metrics().
+
+    Args:
+        tuples: List of (onset_sec, offset_sec, midi_pitch, midi_program)
+                as returned by piano_roll_to_note_list().
+    Returns:
+        List[Note] with velocity=64 (a neutral dummy; metrics use onset/pitch/program).
+    """
+    return [
+        Note(
+            is_drum=False,
+            program=program,
+            onset=onset,
+            offset=offset,
+            pitch=pitch,
+            velocity=64,
+        )
+        for onset, offset, pitch, program in tuples
+    ]

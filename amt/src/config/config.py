@@ -139,6 +139,7 @@ model_cfg["decoder"]["ffnn"] = {
     "hidden_dim": 256,
     "dropout": 0.1,
     "pos_weight": 10.0, # tune with compute_pos_weight() on training set
+    "threshold": 0.5,   # sigmoid threshold for inference; tune on val set after training
 }
 # yapf: enable
 shared_cfg = {
