@@ -433,7 +433,7 @@ class T5EncoderYMT3(T5PreTrainedModel):
     def _forward_no_compile(self, **kwargs):
         return self._forward(**kwargs)
 
-    @torch.compile
+    # @torch.compile  # Disabled for Python 3.12+ compatibility
     def _forward_compile(self, **kwargs):
         return self._forward(**kwargs)
 
@@ -502,7 +502,7 @@ class T5DecoderYMT3(T5PreTrainedModel):
     def _forward_no_compile(self, **kwargs):
         return self._forward(**kwargs)
 
-    @torch.compile
+    # @torch.compile  # Disabled for Python 3.12+ compatibility
     def _forward_compile(self, **kwargs):
         return self._forward(**kwargs)
 
@@ -590,7 +590,7 @@ class MultiChannelT5Decoder(T5PreTrainedModel):
     def _forward_no_compile(self, **kwargs):
         return self._forward(**kwargs)
 
-    @torch.compile
+    # @torch.compile  # Disabled for Python 3.12+ compatibility
     def _forward_compile(self, **kwargs):
         return self._forward(**kwargs)
 

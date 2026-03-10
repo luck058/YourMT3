@@ -1,2 +1,15 @@
 amt/logs/
 examples/
+**/__pycache__/
+venv/
+venv311/
+
+*.pyc
+
+ML\ Practical\ Coursework\ 3.pdf
+
+model_output/
+test_batch_output/
+test_local_output/
+
+

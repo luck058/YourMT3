@@ -55,7 +55,8 @@ else:
     raise ValueError(model_name)
 
 model = load_model_checkpoint(args=args, device="cpu")
-model.to("cuda")
+# model.to("mps")  # Disabled - using CPU for stability
+print("⚠️  Running on CPU (inference will take 5-10 minutes per file)")
 # @title GradIO helper
 
 
@@ -98,17 +99,30 @@ def prepare_media(source_path_or_url: os.PathLike,
     else:
         raise ValueError(source_type)
 
-    # Create info
-    info = torchaudio.info(audio_file)
+    # Create info (torchaudio.info() was removed in torchaudio 2.10)
+    try:
+        import soundfile as sf
+        sf_info = sf.info(audio_file)
+        sample_rate = sf_info.samplerate
+        num_channels = sf_info.channels
+        num_frames = sf_info.frames
+        bits_map = {'PCM_16': 16, 'PCM_24': 24, 'PCM_32': 32, 'PCM_8': 8, 'FLOAT': 32, 'DOUBLE': 64}
+        bits_per_sample = bits_map.get(sf_info.subtype, 16)
+        encoding = str.lower(sf_info.format)
+    except Exception:
+        waveform, sample_rate = torchaudio.load(audio_file)
+        num_channels, num_frames = waveform.shape
+        bits_per_sample = 16
+        encoding = os.path.splitext(audio_file)[1].lstrip('.').lower()
     return {
         "filepath": audio_file,
         "track_name": os.path.basename(audio_file).split('.')[0],
-        "sample_rate": int(info.sample_rate),
-        "bits_per_sample": int(info.bits_per_sample),
-        "num_channels": int(info.num_channels),
-        "num_frames": int(info.num_frames),
-        "duration": int(info.num_frames / info.sample_rate),
-        "encoding": str.lower(info.encoding),
+        "sample_rate": int(sample_rate),
+        "bits_per_sample": bits_per_sample,
+        "num_channels": int(num_channels),
+        "num_frames": int(num_frames),
+        "duration": int(num_frames / sample_rate),
+        "encoding": encoding,
         }
 
 @spaces.GPU

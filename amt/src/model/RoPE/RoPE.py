@@ -266,7 +266,7 @@ class RotaryEmbedding(Module):
         return freqs
 
     # custom method for applying rotary embeddings
-    @torch.compiler.disable
+    # @torch.compiler.disable  # Disabled for Python 3.12+ compatibility
     def apply_rotary_custom(self, t: torch.Tensor):
         """Apply rotary embeddings to queries and keys, if k is None, only q is rotated.
            Depending on the freqs type, the rotation will be different."""

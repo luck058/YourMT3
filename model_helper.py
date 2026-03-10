@@ -6,6 +6,7 @@ from collections import Counter
 import argparse
 import torch
 import torchaudio
+import librosa
 import numpy as np
 
 from model.init_train import initialize_trainer, update_config
@@ -128,8 +129,14 @@ def transcribe(model, audio_info):
 
     # Converting Audio
     t.start()
-    audio, sr = torchaudio.load(uri=audio_info['filepath'])
-    audio = torch.mean(audio, dim=0).unsqueeze(0)
+    # Use librosa which is most compatible
+    audio_np, sr = librosa.load(audio_info['filepath'], sr=None, mono=False)
+    # librosa returns (samples,) for mono or (2, samples) for stereo
+    if audio_np.ndim == 1:
+        audio = torch.from_numpy(audio_np).float().unsqueeze(0)
+    else:
+        audio = torch.from_numpy(audio_np).float()
+    audio = torch.mean(audio, dim=0).unsqueeze(0)  # Convert to mono
     audio = torchaudio.functional.resample(audio, sr, model.audio_cfg['sample_rate'])
     audio_segments = slice_padded_array(audio, model.audio_cfg['input_frames'], model.audio_cfg['input_frames'])
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
