@@ -1,4 +1,5 @@
 # NOTE: Compatible with Python 3.12+ (torch.compile decorators disabled)
+# Cluster-friendly version - no GitHub URLs
 
 # Core ML packages
 torch>=2.5.0
@@ -21,17 +22,13 @@ einops
 numpy==1.26.4
 
 # Music information retrieval
-git+https://github.com/craffel/mir_eval.git
+mir_eval
 pretty_midi
 
 # Utilities
 python-dotenv
 requests
 setuptools
-
-# YouTube download (optional - may timeout on cluster, skip if needed)
-yt-dlp
-# https://github.com/coletdjnz/yt-dlp-youtube-oauth2/archive/refs/heads/master.zip
 
 # Experiment tracking (optional)
 wandb
