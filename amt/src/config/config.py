@@ -169,7 +169,7 @@ shared_cfg = {
     },
     "DATAIO": { # do not set `shuffle` here. 
         "num_workers": 4, # num_worker is per GPU in DDP mode
-        "prefetch_factor": 2, #2,
+        "prefetch_factor": 2, #2
         "pin_memory": True,
         "persistent_workers": False,
     },
@@ -191,8 +191,8 @@ shared_cfg = {
         "num_sanity_val_steps": 0,
     },
     "WANDB": {
-        # "save_dir": "../logs",
-        "save_dir": "amt/logs", # modified for huggingface spaces...
+        "save_dir": "../logs",
+        # "save_dir": "amt/logs", # modified for huggingface spaces...
         "cache_dir": "../logs/.wandb_cache",
         "resume": "allow",
         "anonymous": "allow", # {never, allow, must}

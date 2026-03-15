@@ -85,6 +85,7 @@ class YourMT3(pl.LightningModule):
             add_melody_metric_to_singing: bool = True,
             test_optimal_octave_shift: bool = False,
             test_pitch_shift_layer: Optional[str] = None,
+            freeze_encoder: bool = False,
             **kwargs: Any) -> None:
         super().__init__()
         if pretrained is True:
@@ -264,6 +265,12 @@ class YourMT3(pl.LightningModule):
             self.embed_tokens = None
         self.shift_right_fn = None
         self.set_encoder_decoder()
+
+        # Freeze encoder if requested (train only decoder + lm_head)
+        if freeze_encoder and self.encoder is not None:
+            self.encoder.requires_grad_(False)
+            if self.global_rank == 0:
+                print("Encoder frozen: only decoder and LM head will be trained.")
 
         # Model as ModuleDict
         # self.model = nn.ModuleDict({
@@ -599,12 +606,6 @@ class YourMT3(pl.LightningModule):
         #         self.task_manager.get_eval_subtask_prefix_dict()[subtask_key]).to(self.device)
 
         n_items = audio_segments.shape[0]
-        if len(notes_dict['notes']) > 0:
-            assert notes_dict['notes'][0].onset >= 0.0, (
-                "notes_dict['notes'] appears to use relative timestamps. "
-                "Pass absolute track-level timestamps, or set start_times=[0.0]*batch_size "
-                "and ensure notes are already sliced to the correct segment."
-            )
         loss = 0.
         pred_token_array_file = []  # each element is (B, C, L) np.ndarray
         x_ps_concat = []

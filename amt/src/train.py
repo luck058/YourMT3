@@ -99,6 +99,12 @@ parser.add_argument('-s', '--scheduler', type=str, default='cosine', help='sched
 parser.add_argument('-n', '--num-nodes', type=int, default=1, help='number of nodes (default=1)')
 parser.add_argument('-g', '--num-gpus', type=str, default='auto', help='number of gpus (default="auto")')
 parser.add_argument('-wb', '--wandb-mode', type=str, default=None, help='wandb mode for logging (default=None). "disabled" or "online" or "offline". If None, default value defined in config.py will be used.')
+parser.add_argument('-fe', '--freeze-encoder', type=str2bool, default=False, help='freeze encoder weights and train only the decoder and LM head (default=False).')
+# DataLoader configurations (cluster-safe overrides)
+parser.add_argument('-nw', '--num-workers', type=int, default=None, help='DataLoader num_workers override (default=None, use config.py).')
+parser.add_argument('-pf', '--prefetch-factor', type=int, default=None, help='DataLoader prefetch_factor override (default=None, use config.py).')
+parser.add_argument('-pm', '--pin-memory', type=str2bool, default=None, help='DataLoader pin_memory override (default=None, use config.py).')
+parser.add_argument('-pw', '--persistent-workers', type=str2bool, default=None, help='DataLoader persistent_workers override (default=None, use config.py).')
 args = parser.parse_args()
 # yapf: enable
 if torch.__version__ >= "1.13":
@@ -109,6 +115,20 @@ trainer, wandb_logger, dir_info, shared_cfg = initialize_trainer(args, stage='tr
 
 # Update config with args, including augmentation settings
 shared_cfg, audio_cfg, model_cfg = update_config(args, shared_cfg, stage='train')
+
+# Optional DataLoader runtime overrides for cluster stability/debugging.
+if args.num_workers is not None:
+    shared_cfg["DATAIO"]["num_workers"] = int(args.num_workers)
+if args.prefetch_factor is not None:
+    shared_cfg["DATAIO"]["prefetch_factor"] = int(args.prefetch_factor)
+if args.pin_memory is not None:
+    shared_cfg["DATAIO"]["pin_memory"] = bool(args.pin_memory)
+if args.persistent_workers is not None:
+    shared_cfg["DATAIO"]["persistent_workers"] = bool(args.persistent_workers)
+
+# PyTorch DataLoader does not allow prefetch_factor when num_workers == 0.
+if int(shared_cfg["DATAIO"].get("num_workers", 0)) == 0 and "prefetch_factor" in shared_cfg["DATAIO"]:
+    shared_cfg["DATAIO"].pop("prefetch_factor", None)
 
 
 def main():
@@ -138,10 +158,21 @@ def main():
         eval_program_vocab = data_preset["eval_vocab"]
     eval_drum_vocab = data_preset.get("eval_drum_vocab", None)
 
+    piano_roll_cfg = None
+    if model_cfg.get("decoder_type") == "ffnn":
+        ffnn_cfg = model_cfg["decoder"]["ffnn"]
+        piano_roll_cfg = {
+            "programs": list(ffnn_cfg["instruments"].values()),
+            "pitch_min": ffnn_cfg["pitch_min"],
+            "pitch_max": ffnn_cfg["pitch_max"],
+            "n_frames": None,  # resolved from audio_cfg at setup time
+        }
+
     dm = AMTDataModule(data_preset_multi=data_preset,
                        task_manager=tm,
                        train_num_samples_per_epoch=args.train_num_samples_per_epoch,
                        audio_cfg=audio_cfg,
+                       piano_roll_cfg=piano_roll_cfg,
                        **shared_cfg["AUGMENTATION"])
 
     model = YourMT3(
@@ -157,22 +188,24 @@ def main():
         eval_vocab=eval_program_vocab,
         eval_drum_vocab=eval_drum_vocab,
         write_output_dir=dir_info["lightning_dir"] if args.write_model_output else None,
-        add_pitch_class_metric=data_preset.get("add_pitch_class_metric", None))
+        add_pitch_class_metric=data_preset.get("add_pitch_class_metric", None),
+        freeze_encoder=args.freeze_encoder)
 
     # if VersionParse(torch.__version__) >= VersionParse("2.1"):
     #     model = torch.compile(model, mode="reduce-overhead")
 
     # Logging config updated by args
-    if trainer.global_rank == 0:
-        wandb_logger.experiment.config.update({"audio_cfg": model.audio_cfg}, allow_val_change=True)
-        wandb_logger.experiment.config.update({"model_cfg": model.model_cfg}, allow_val_change=True)
-        wandb_logger.experiment.config.update(model.shared_cfg, allow_val_change=True)
+    if wandb_logger is not None:
+        if trainer.global_rank == 0:
+            wandb_logger.experiment.config.update({"audio_cfg": model.audio_cfg}, allow_val_change=True)
+            wandb_logger.experiment.config.update({"model_cfg": model.model_cfg}, allow_val_change=True)
+            wandb_logger.experiment.config.update(model.shared_cfg, allow_val_change=True)
 
-    wandb_logger.watch(model, log='gradients', log_freq=5000)
+        wandb_logger.watch(model, log='gradients', log_freq=5000)
 
     # last_ckpt_path can be None
     if dir_info["last_ckpt_path"] is not None:
-        checkpoint = torch.load(dir_info["last_ckpt_path"])
+        checkpoint = torch.load(dir_info["last_ckpt_path"], weights_only=False)
         state_dict = checkpoint['state_dict']
         model.load_state_dict(state_dict, strict=False)
         trainer.fit(model, datamodule=dm)

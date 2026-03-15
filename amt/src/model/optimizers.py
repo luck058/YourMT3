@@ -179,6 +179,9 @@ def get_optimizer(models_dict: nn.ModuleDict,
         # drop pitch shifter
         if 'pshifters' in n:
             continue
+        # skip frozen parameters
+        if not p.requires_grad:
+            continue
         # no decay
         if n in no_decay:
             optimizer_grouped_parameters.append({"params": [p], "weight_decay": 0.0})

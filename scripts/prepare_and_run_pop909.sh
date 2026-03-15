@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=test_pop909_one
+#SBATCH --job-name=prep_pop909
 #SBATCH --partition=Teaching
 #SBATCH --gres=gpu:1
-#SBATCH --nodelist=landonia11
-#SBATCH --time=2:00:00
-#SBATCH --mem=32G
-#SBATCH --output=logs/test_pop909_one_%j.out
-#SBATCH --error=logs/test_pop909_one_%j.err
+#SBATCH --exclude=damnii[07-12],landonia[01-08,21-25]
+#SBATCH --time=48:00:00
+#SBATCH --mem=16G
+#SBATCH --output=logs/prep_pop909_%j.out
+#SBATCH --error=logs/prep_pop909_%j.err
 
 # Print job info
 echo "Job started at: $(date)"
@@ -20,9 +20,9 @@ source venv/bin/activate
 # Create directories
 mkdir -p logs
 mkdir -p /disk/scratch/s2286943/mlp_dataset
-mkdir -p /home/s2286943/pop909_midi_output_test
+mkdir -p /home/s2286943/pop909_midi_output
 
-# Step 1: Prepare POP909 dataset (if not already done)
+# Step 1: Prepare POP909 dataset
 echo "================================================"
 echo "Step 1: Preparing POP909 dataset..."
 echo "================================================"
@@ -42,16 +42,15 @@ nvidia-smi
 # Set PyTorch memory optimization
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-# Step 3: Run batch inference on ONE file from POP909
+# Step 3: Run batch inference on POP909 dataset
 echo "================================================"
-echo "Step 2: Running inference on ONE POP909 file..."
+echo "Step 2: Running inference on POP909..."
 echo "================================================"
 python batch_inference.py \
     --input-dir /disk/scratch/s2286943/mlp_dataset/POP909-Dataset/POP909/ \
-    --output-dir /home/s2286943/pop909_midi_output_test/ \
+    --output-dir /home/s2286943/pop909_midi_output/ \
     --device cuda \
-    --start-idx 0 \
-    --end-idx 1 \
+    --skip-existing \
     --model-name "YMT3+"
 
 # Check if inference succeeded
@@ -60,10 +59,5 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-echo "================================================"
-echo "Test completed successfully!"
-echo "================================================"
 echo "Job finished at: $(date)"
-echo ""
-echo "Output location: /home/s2286943/pop909_midi_output_test/model_output/"
-echo "Check the MIDI file to verify it worked correctly."
+echo "All tasks completed successfully!"

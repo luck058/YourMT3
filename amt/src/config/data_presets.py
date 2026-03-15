@@ -371,9 +371,30 @@ data_preset_single_cfg = {
             "test_split": "validation_sep",
             "has_stem": False,
     },
+    "pop909": {
+            "eval_vocab": [PIANO_SOLO_CLASS],
+            "dataset_name": "pop909",
+            "train_split": "train",
+            "validation_split": "validation",
+            "test_split": "test",
+            "has_stem": False,
+    },
+    "aam": {
+            "eval_vocab": [GM_INSTR_CLASS],
+            "dataset_name": "aam",
+            "train_split": "train",
+            "validation_split": "validation",
+            "test_split": "test",
+            "has_stem": False,
+    },
 }
 
 data_preset_multi_cfg = {
+    "pop909_aam": {
+        "presets": ["pop909", "aam"],
+        "weights": [0.5, 0.5],
+        "eval_vocab": [PIANO_SOLO_CLASS, GM_INSTR_CLASS],
+    },
     "musicnet_mt3_em_synth_plus_maps": {
         "presets": ["musicnet_mt3_em_synth", "maps_all"],
         "weights": [0.6, 0.4],

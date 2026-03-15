@@ -58,20 +58,24 @@ def prepare_aam():
             # Create the flag file so we know it's done
             open(extract_flag, 'w').close()
 
-    # 2. Downsample Audio Mixes
-    flac_files = glob.glob(os.path.join(aam_dir, "*.flac"))
-    
+    # 2. Downsample Audio Mixes (recursive search — zip extracts into subdirectory)
+    flac_files = glob.glob(os.path.join(aam_dir, "**", "*.flac"), recursive=True)
+
     # Only print if there's actually work to do
     if flac_files:
         print(f"Downsampling {len(flac_files)} AAM files to {TARGET_SR}Hz...")
         for flac_file in flac_files:
-            wav_file = flac_file.replace(".flac", "_16k.wav")
+            # Save all downsampled WAVs flat into aam_dir using the stem name
+            stem = os.path.splitext(os.path.basename(flac_file))[0]
+            wav_file = os.path.join(aam_dir, f"{stem}_16k.wav")
             if not os.path.exists(wav_file):
                 y, sr = librosa.load(flac_file, sr=TARGET_SR, mono=True)
                 sf.write(wav_file, y, TARGET_SR)
                 # Remove high-res FLAC to save cluster quota
                 os.remove(flac_file)
         print("AAM Downsampling Complete!")
+    else:
+        print("No AAM FLAC files found to downsample (may already be done).")
 
 if __name__ == "__main__":
     print("Starting dataset preparation pipeline...")

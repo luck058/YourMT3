@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=prep_pop909
+#SBATCH --job-name=prep_aam
 #SBATCH --partition=Teaching
 #SBATCH --gres=gpu:1
-#SBATCH --nodelist=landonia11
+#SBATCH --exclude=damnii[07-12],landonia[01-08,21-25]
 #SBATCH --time=48:00:00
-#SBATCH --mem=64G
-#SBATCH --output=logs/prep_pop909_%j.out
-#SBATCH --error=logs/prep_pop909_%j.err
+#SBATCH --mem=16G
+#SBATCH --output=logs/prep_aam_%j.out
+#SBATCH --error=logs/prep_aam_%j.err
 
 # Print job info
 echo "Job started at: $(date)"
@@ -19,13 +19,16 @@ source venv/bin/activate
 
 # Create directories
 mkdir -p logs
-mkdir -p /disk/scratch/s2286943/mlp_dataset
-mkdir -p /home/s2286943/pop909_midi_output
+mkdir -p /disk/scratch/s2286943/mlp_dataset/AAM
+mkdir -p /home/s2286943/aam_midi_output
 
-# Step 1: Prepare POP909 dataset
+# Step 1: Prepare AAM dataset (download, extract, resample)
 echo "================================================"
-echo "Step 1: Preparing POP909 dataset..."
+echo "Step 1: Preparing AAM dataset..."
 echo "================================================"
+echo "This will download ~several GB from Zenodo"
+echo "May take 1-2 hours depending on network speed"
+
 python prepare_datasets.py
 
 # Check if dataset preparation succeeded
@@ -42,13 +45,13 @@ nvidia-smi
 # Set PyTorch memory optimization
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-# Step 3: Run batch inference on POP909 dataset
+# Step 3: Run batch inference on AAM dataset
 echo "================================================"
-echo "Step 2: Running inference on POP909..."
+echo "Step 2: Running inference on AAM..."
 echo "================================================"
 python batch_inference.py \
-    --input-dir /disk/scratch/s2286943/mlp_dataset/POP909-Dataset/POP909/ \
-    --output-dir /home/s2286943/pop909_midi_output/ \
+    --input-dir /disk/scratch/s2286943/mlp_dataset/AAM/ \
+    --output-dir /home/s2286943/aam_midi_output/ \
     --device cuda \
     --skip-existing \
     --model-name "YMT3+"
