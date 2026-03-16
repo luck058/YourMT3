@@ -73,6 +73,14 @@ def initialize_trainer(args: argparse.Namespace,
         **shared_cfg["CHECKPOINT"],
     )
 
+    # periodic checkpoint: save every N epochs regardless of validation
+    periodic_checkpoint_callback = ModelCheckpoint(
+        dirpath=checkpoint_dir,
+        filename="periodic-{epoch}-{step}",
+        every_n_epochs=shared_cfg["CHECKPOINT"].get("periodic_save_every_n_epochs", 5),
+        save_top_k=-1,  # keep all periodic checkpoints
+    )
+
     # define lr scheduler monitor callback
     lr_monitor = LearningRateMonitor(logging_interval='step')
 
@@ -115,7 +123,7 @@ def initialize_trainer(args: argparse.Namespace,
                         max_epochs=args.max_epochs if stage == 'train' else None,
                         max_steps=args.max_steps if stage == 'train' else -1,
                         # logger=wandb_logger,
-                        callbacks=[checkpoint_callback, lr_monitor],
+                        callbacks=[checkpoint_callback, periodic_checkpoint_callback, lr_monitor],
                         sync_batchnorm=sync_batchnorm)
     trainer = pl.trainer.trainer.Trainer(**train_params)
 

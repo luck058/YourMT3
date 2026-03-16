@@ -180,10 +180,11 @@ shared_cfg = {
         # "every_n_epochs": 20, # only working when check_val_every_n_epoch is 0
         "save_last": True, # save last model
         "filename": "{epoch}-{step}",
+        "periodic_save_every_n_epochs": 1, # save a checkpoint every N epochs regardless of validation
     },
     "TRAINER": { # do not coverwrite args in this section
         "limit_train_batches": 1.0, # How much of training dataset to check (float = fraction, int = num_batches)
-        "limit_val_batches": 1.0,
+        "limit_val_batches": 10,
         "limit_test_batches": 1.0,
         "gradient_clip_val": 1.0, # {0 or None} means don't clip.
         "accumulate_grad_batches": 1, #1, # Accumulates grads every k batches. If set to 1, no effect.
