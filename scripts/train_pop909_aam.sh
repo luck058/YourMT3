@@ -2,7 +2,6 @@
 #SBATCH --job-name=train_pop909_aam
 #SBATCH --partition=Teaching
 #SBATCH --gres=gpu:1
-#SBATCH --exclude=damnii[07-12],landonia[01-08,21-25]
 #SBATCH --time=48:00:00
 #SBATCH --mem=16G
 #SBATCH --output=logs/train_pop909_aam_%j.out
