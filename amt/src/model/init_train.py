@@ -79,7 +79,7 @@ def initialize_trainer(args: argparse.Namespace,
         dirpath=checkpoint_dir,
         filename="periodic-{epoch}-{step}",
         every_n_epochs=shared_cfg["CHECKPOINT"].get("periodic_save_every_n_epochs", 5),
-        save_top_k=3,  # keep only the 3 most recent periodic checkpoints
+        save_top_k=-1,  # keep all periodic checkpoints
     )
 
     # define lr scheduler monitor callback
