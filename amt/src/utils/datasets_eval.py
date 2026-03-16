@@ -114,17 +114,20 @@ class AudioFileDataset(Dataset):
         note_events_file = metadata['note_events_file']
 
         # load the audio
-        audio = load_audio_file(audio_file, dtype=np.int16)  # returns bytes
-        audio = audio / 2**15
-        audio = audio.astype(np.float32)
-        audio = audio.reshape(1, -1)
-        audio_segments = slice_padded_array(
-            audio,
-            self.seg_len_frame,
-            self.seg_hop_frame,
-            pad=True,
-        )  # (n_segs, seg_len_frame)
-        audio_segments = rearrange(audio_segments, 'n t -> n 1 t').astype(np.float32)
+        if 'audio_segments_file' in metadata:
+            audio_segments = np.load(metadata['audio_segments_file'], allow_pickle=False)
+        else:
+            audio = load_audio_file(audio_file, dtype=np.int16)  # returns bytes
+            audio = audio / 2**15
+            audio = audio.astype(np.float32)
+            audio = audio.reshape(1, -1)
+            audio_segments = slice_padded_array(
+                audio,
+                self.seg_len_frame,
+                self.seg_hop_frame,
+                pad=True,
+            )  # (n_segs, seg_len_frame)
+            audio_segments = rearrange(audio_segments, 'n t -> n 1 t').astype(np.float32)
         num_segs = audio_segments.shape[0]
 
         # load all notes and from a file (of a single song)
