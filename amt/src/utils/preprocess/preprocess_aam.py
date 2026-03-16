@@ -28,9 +28,12 @@ import glob
 from typing import Dict, Tuple
 
 import numpy as np
-from utils.audio import get_audio_file_info
+from einops import rearrange
+from utils.audio import get_audio_file_info, load_audio_file, slice_padded_array
 from utils.midi import midi2note
 from utils.note2event import note2note_event, mix_notes
+
+SEG_LEN_FRAME = 32767  # must match audio_cfg["input_frames"]
 
 
 # Splits: 800 train / 100 val / 100 test (songs 0001–1000)
@@ -150,7 +153,7 @@ def preprocess_aam(data_home: str, dataset_name: str = "aam") -> None:
             np.save(notes_file, notes, allow_pickle=True, fix_imports=False)
             np.save(note_events_file, note_events, allow_pickle=True, fix_imports=False)
 
-            file_list[i] = {
+            entry = {
                 "aam_id": song_id,
                 "n_frames": n_frames,
                 "mix_audio_file": audio_file,
@@ -160,6 +163,17 @@ def preprocess_aam(data_home: str, dataset_name: str = "aam") -> None:
                 "program": notes["program"],
                 "is_drum": notes["is_drum"],
             }
+
+            if split in ('validation', 'test'):
+                audio = load_audio_file(audio_file, dtype=np.int16)
+                audio = (audio / 2**15).astype(np.float32).reshape(1, -1)
+                segs = slice_padded_array(audio, SEG_LEN_FRAME, SEG_LEN_FRAME, pad=True)
+                segs = rearrange(segs, 'n t -> n 1 t').astype(np.float32)
+                audio_segments_file = os.path.join(aam_dir, f"{song_id}_audio_segments.npy")
+                np.save(audio_segments_file, segs, fix_imports=False)
+                entry['audio_segments_file'] = audio_segments_file
+
+            file_list[i] = entry
 
         index_file = os.path.join(output_index_dir, f"{dataset_name}_{split}_file_list.json")
         with open(index_file, "w") as f:

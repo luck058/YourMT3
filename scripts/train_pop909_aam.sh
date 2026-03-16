@@ -61,7 +61,7 @@ if [ $? -ne 0 ]; then
 fi
 echo "Preprocessing complete at: $(date)"
 
-# Copy index files from scratch to the local data dir (training uses ../../data/yourmt3_indexes)
+# Copy index files from scratch to the local data dir (training uses ../../data/yourmt3_indexes) or create symlinks if you prefer. This is necessary because the training script expects the index files to be in a specific location.
 mkdir -p /home/s2286943/YourMT3/data/yourmt3_indexes
 cp "$DATA_HOME/yourmt3_indexes/"*.json /home/s2286943/YourMT3/data/yourmt3_indexes/
 echo "--- Index files ---"
