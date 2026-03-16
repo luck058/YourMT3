@@ -187,7 +187,7 @@ shared_cfg = {
         "limit_test_batches": 1.0,
         "gradient_clip_val": 1.0, # {0 or None} means don't clip.
         "accumulate_grad_batches": 1, #1, # Accumulates grads every k batches. If set to 1, no effect.
-        "check_val_every_n_epoch": 1, #5, 1 for very large dataset such as EGMD
+        "check_val_every_n_epoch": 10, #5, 1 for very large dataset such as EGMD
         "num_sanity_val_steps": 0,
     },
     "WANDB": {
