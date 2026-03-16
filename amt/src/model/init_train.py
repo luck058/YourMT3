@@ -67,7 +67,11 @@ def initialize_trainer(args: argparse.Namespace,
     dir_info = dict(lightning_dir=lightning_dir, last_ckpt_path=last_ckpt_path)
 
     # define checkpoint callback
-    checkpoint_callback = ModelCheckpoint(**shared_cfg["CHECKPOINT"],)
+    checkpoint_dir = os.path.join(lightning_dir, "checkpoints")
+    checkpoint_callback = ModelCheckpoint(
+        dirpath=checkpoint_dir,
+        **shared_cfg["CHECKPOINT"],
+    )
 
     # define lr scheduler monitor callback
     lr_monitor = LearningRateMonitor(logging_interval='step')
