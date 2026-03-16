@@ -115,8 +115,13 @@ class AudioFileDataset(Dataset):
 
         # load the audio
         if 'audio_segments_file' in metadata:
+            if index == 0:
+                print(f"[eval] Loading audio from cache: {metadata['audio_segments_file']}")
             audio_segments = np.load(metadata['audio_segments_file'], allow_pickle=False)
         else:
+            if index == 0:
+                print(f"[eval] No cache found, loading raw audio: {metadata['mix_audio_file']}")
+
             audio = load_audio_file(audio_file, dtype=np.int16)  # returns bytes
             audio = audio / 2**15
             audio = audio.astype(np.float32)
