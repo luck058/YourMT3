@@ -68,9 +68,10 @@ def initialize_trainer(args: argparse.Namespace,
 
     # define checkpoint callback
     checkpoint_dir = os.path.join(lightning_dir, "checkpoints")
+    checkpoint_cfg = {k: v for k, v in shared_cfg["CHECKPOINT"].items() if k != "periodic_save_every_n_epochs"}
     checkpoint_callback = ModelCheckpoint(
         dirpath=checkpoint_dir,
-        **shared_cfg["CHECKPOINT"],
+        **checkpoint_cfg,
     )
 
     # periodic checkpoint: save every N epochs regardless of validation
@@ -78,7 +79,7 @@ def initialize_trainer(args: argparse.Namespace,
         dirpath=checkpoint_dir,
         filename="periodic-{epoch}-{step}",
         every_n_epochs=shared_cfg["CHECKPOINT"].get("periodic_save_every_n_epochs", 5),
-        save_top_k=-1,  # keep all periodic checkpoints
+        save_top_k=3,  # keep only the 3 most recent periodic checkpoints
     )
 
     # define lr scheduler monitor callback
