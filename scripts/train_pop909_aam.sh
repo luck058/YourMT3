@@ -76,10 +76,11 @@ echo "================================================"
 # The checkpoint must exist at:
 #   amt/logs/2024/notask_all_cross_v6_xk2_amp0811_gm_ext_plus_nops_b72/checkpoints/model.ckpt
 python train.py \
-    "finetune_pop909_aam" \
+    "train_pop909_aam" \
     -p 2024 \
     -d pop909_aam \
     -tk mt3_full_plus \
+    -dec ffnn \
     -o AdamW \
     -lr 1e-4 \
     -bsz 4 8 \
