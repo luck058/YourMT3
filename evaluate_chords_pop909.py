@@ -74,7 +74,7 @@ def midi_to_chord_estimates(midi_path: str):
     intervals = []
     labels = []
 
-    for elem in chordified.flat.getElementsByClass(['Chord', 'Rest']):
+    for elem in chordified.flatten().getElementsByClass(['Chord', 'Rest']):
         try:
             start_sec = float(elem.getOffsetInHierarchy(chordified))
             end_sec = start_sec + float(elem.seconds)
@@ -113,6 +113,12 @@ def evaluate_song(midi_path: str, pop909_song_dir: str):
         return None
 
     try:
+        # Trim both to the shorter duration so intervals align
+        duration = min(ref_intervals[-1, 1], est_intervals[-1, 1])
+        ref_intervals, ref_labels = mir_eval.chord.adjust_intervals(
+            ref_intervals, ref_labels, 0, duration, mir_eval.chord.NO_CHORD, mir_eval.chord.NO_CHORD)
+        est_intervals, est_labels = mir_eval.chord.adjust_intervals(
+            est_intervals, est_labels, 0, duration, mir_eval.chord.NO_CHORD, mir_eval.chord.NO_CHORD)
         scores = mir_eval.chord.evaluate(ref_intervals, ref_labels,
                                          est_intervals, est_labels)
     except Exception as e:
