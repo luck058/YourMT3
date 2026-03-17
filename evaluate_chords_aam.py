@@ -34,59 +34,56 @@ def parse_arff_key_to_mir_eval(key_str: str) -> str:
     return f"{root}:{quality}"
 
 
-def load_chord_annotations_arff(segments_arff: str):
+def load_chord_annotations_arff(beatinfo_arff: str):
     """
-    Load {id}_segments.arff -> (intervals, labels) for mir_eval.
-    Uses Key field as chord label. End time comes from next segment's start,
-    or the 'end' marker row.
+    Load {id}_beatinfo.arff -> (intervals, labels) for mir_eval.
+    Format: start_time, bar, beat, chord_label
+    End time of each beat = start time of the next beat.
     """
-    entries = []  # list of (start_sec, key_str)
-    end_time = None
+    entries = []  # list of (start_sec, chord_str)
 
     in_data = False
-    with open(segments_arff) as f:
+    with open(beatinfo_arff) as f:
         for line in f:
             line = line.strip()
-            if line == '@DATA':
+            if line.upper() == '@DATA':
                 in_data = True
                 continue
-            if not in_data or not line:
+            if line.startswith('@') or not line:
                 continue
+            if not in_data:
+                # some arff files omit @DATA, start reading once we see numeric data
+                if not line[0].isdigit():
+                    continue
+                in_data = True
 
-            # Parse CSV with single-quoted strings
             parts = [p.strip().strip("'") for p in line.split(',')]
             if len(parts) < 4:
                 continue
 
             start_sec = float(parts[0])
-            mark = parts[1]
-            key_str = parts[3]
-
-            if mark == 'end':
-                end_time = start_sec
-                break
-
-            entries.append((start_sec, key_str))
+            chord_str = parts[3]
+            entries.append((start_sec, chord_str))
 
     if not entries:
         return np.array([], dtype=float).reshape(0, 2), []
 
-    # Build intervals: each segment ends where the next begins
+    # Build intervals: each beat ends where the next begins
+    # Estimate duration of last beat from average beat length
+    if len(entries) > 1:
+        avg_beat = (entries[-1][0] - entries[0][0]) / (len(entries) - 1)
+    else:
+        avg_beat = 0.5
+    last_end = entries[-1][0] + avg_beat
+
     intervals = []
     labels = []
-    for i, (start_sec, key_str) in enumerate(entries):
-        if i + 1 < len(entries):
-            end_sec = entries[i + 1][0]
-        elif end_time is not None:
-            end_sec = end_time
-        else:
-            continue  # no end time available
-
+    for i, (start_sec, chord_str) in enumerate(entries):
+        end_sec = entries[i + 1][0] if i + 1 < len(entries) else last_end
         if end_sec <= start_sec:
             continue
-
         intervals.append([start_sec, end_sec])
-        labels.append(parse_arff_key_to_mir_eval(key_str))
+        labels.append(parse_arff_key_to_mir_eval(chord_str))
 
     return np.array(intervals, dtype=float), labels
 
@@ -222,7 +219,7 @@ def main():
             print(f"  WARNING: no MIDI found for song {song_id}, skipping.")
             continue
 
-        segments_arff = os.path.join(args.annotations_dir, f"{song_id}_segments.arff")
+        segments_arff = os.path.join(args.annotations_dir, f"{song_id}_beatinfo.arff")
         print(f"  [{song_id}] evaluating...")
         scores = evaluate_song(midi_path, segments_arff)
         if scores is not None:
