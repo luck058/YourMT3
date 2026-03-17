@@ -154,7 +154,7 @@ def main():
             test_pitch_shift_layer=args.test_pitch_shift)
 
         # load checkpoint & drop pitchshift from state_dict
-        checkpoint = torch.load(dir_info["last_ckpt_path"])
+        checkpoint = torch.load(dir_info["last_ckpt_path"], weights_only=False)
         state_dict = checkpoint['state_dict']
         new_state_dict = {k: v for k, v in state_dict.items() if 'pitchshift' not in k}
         model.load_state_dict(new_state_dict, strict=False)
