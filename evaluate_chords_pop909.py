@@ -150,12 +150,24 @@ def evaluate_song(midi_path: str, pop909_song_dir: str):
         return None
 
     try:
-        # Trim both to the shorter duration so intervals align
         duration = min(ref_intervals[-1, 1], est_intervals[-1, 1])
-        ref_intervals, ref_labels = mir_eval.util.adjust_intervals(
-            ref_intervals, ref_labels, 0, duration, 'N', 'N')
-        est_intervals, est_labels = mir_eval.util.adjust_intervals(
-            est_intervals, est_labels, 0, duration, 'N', 'N')
+
+        def trim_intervals(intervals, labels, dur):
+            """Trim intervals to [0, dur], dropping zero-duration results."""
+            out_iv, out_lb = [], []
+            for iv, lb in zip(intervals, labels):
+                s, e = max(iv[0], 0.0), min(iv[1], dur)
+                if e - s > 1e-6:
+                    out_iv.append([s, e])
+                    out_lb.append(lb)
+            return np.array(out_iv, dtype=float), out_lb
+
+        ref_intervals, ref_labels = trim_intervals(ref_intervals, ref_labels, duration)
+        est_intervals, est_labels = trim_intervals(est_intervals, est_labels, duration)
+
+        if len(ref_intervals) == 0 or len(est_intervals) == 0:
+            return None
+
         scores = mir_eval.chord.evaluate(ref_intervals, ref_labels,
                                          est_intervals, est_labels)
     except Exception as e:
