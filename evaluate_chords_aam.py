@@ -86,8 +86,7 @@ def load_chord_annotations_arff(beatinfo_arff: str):
         end_sec = entries[i + 1][0] if i + 1 < len(entries) else last_end
         if prev_end is not None:
             start_sec = prev_end  # force contiguous
-        if end_sec - start_sec < 1e-6:
-            continue
+        end_sec = max(end_sec, start_sec + 1e-6)  # ensure strictly positive duration
         intervals.append([start_sec, end_sec])
         labels.append(parse_arff_key_to_mir_eval(chord_str))
         prev_end = end_sec
