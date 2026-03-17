@@ -26,3 +26,8 @@ ref_intervals, ref_labels = load_chord_annotations_arff(arff_path)
 print('\nREF intervals (first 10):')
 for iv, lb in zip(ref_intervals[:10], ref_labels[:10]):
     print(f'  {iv[0]:.6f} -> {iv[1]:.6f}  ({lb})')
+
+print('\nChecking for overlaps in REF intervals:')
+for i in range(1, len(ref_intervals)):
+    if ref_intervals[i][0] < ref_intervals[i-1][1] - 1e-6:
+        print(f'  OVERLAP at index {i}: {ref_intervals[i-1]} -> {ref_intervals[i]}')
