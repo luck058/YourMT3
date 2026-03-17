@@ -68,7 +68,9 @@ def load_chord_annotations_arff(beatinfo_arff: str):
     if not entries:
         return np.array([], dtype=float).reshape(0, 2), []
 
-    # Build intervals: each beat ends where the next begins
+    # Sort by start time (some beatinfo.arff files have out-of-order entries)
+    entries.sort(key=lambda x: x[0])
+
     # Estimate duration of last beat from average beat length
     if len(entries) > 1:
         avg_beat = (entries[-1][0] - entries[0][0]) / (len(entries) - 1)
@@ -76,14 +78,19 @@ def load_chord_annotations_arff(beatinfo_arff: str):
         avg_beat = 0.5
     last_end = entries[-1][0] + avg_beat
 
+    # Build intervals, clipping each end to the next start to avoid overlaps
     intervals = []
     labels = []
+    prev_end = None
     for i, (start_sec, chord_str) in enumerate(entries):
         end_sec = entries[i + 1][0] if i + 1 < len(entries) else last_end
-        if end_sec <= start_sec:
+        if prev_end is not None:
+            start_sec = prev_end  # force contiguous
+        if end_sec - start_sec < 1e-6:
             continue
         intervals.append([start_sec, end_sec])
         labels.append(parse_arff_key_to_mir_eval(chord_str))
+        prev_end = end_sec
 
     return np.array(intervals, dtype=float), labels
 
