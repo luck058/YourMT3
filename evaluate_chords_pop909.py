@@ -110,12 +110,20 @@ def midi_to_chord_estimates(midi_path: str):
 
     # Sort and make contiguous: set each start = previous end
     entries.sort(key=lambda x: x[0])
+
+    # Deduplicate entries with the same start time, keeping the first
+    deduped = []
+    for entry in entries:
+        if deduped and entry[0] == deduped[-1][0]:
+            continue
+        deduped.append(entry)
+
     intervals = []
     labels = []
-    for i, (start, end, label) in enumerate(entries):
+    for start, end, label in deduped:
         if intervals:
             start = intervals[-1][1]  # force contiguous
-        if end <= start:
+        if end - start < 1e-6:
             continue
         intervals.append([start, end])
         labels.append(label)
