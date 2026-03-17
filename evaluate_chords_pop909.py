@@ -74,10 +74,12 @@ def midi_to_chord_estimates(midi_path: str):
     intervals = []
     labels = []
 
-    for entry in chordified.secondsMap:
-        elem = entry['element']
-        start_sec = float(entry['offsetSeconds'])
-        end_sec = float(entry['endTimeSeconds'])
+    for elem in chordified.flat.getElementsByClass(['Chord', 'Rest']):
+        try:
+            start_sec = float(elem.getOffsetInHierarchy(chordified))
+            end_sec = start_sec + float(elem.seconds)
+        except Exception:
+            continue
 
         if end_sec <= start_sec:
             continue

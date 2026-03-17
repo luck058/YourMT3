@@ -40,3 +40,6 @@ wandb
 gradio
 gradio_log
 spaces
+
+# midi to chord conversion (optional, for evaluation)
+music21
