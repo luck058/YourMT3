@@ -217,7 +217,7 @@ def main():
     all_scores = {}
 
     for song_id in song_ids:
-        midi_path = os.path.join(args.midi_dir, f"{song_id}.mid")
+        midi_path = os.path.join(args.midi_dir, f"{song_id}_mix_16k.mid")
         if not os.path.exists(midi_path):
             print(f"  WARNING: no MIDI found for song {song_id}, skipping.")
             continue
