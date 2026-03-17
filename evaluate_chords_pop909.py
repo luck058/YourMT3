@@ -111,22 +111,25 @@ def midi_to_chord_estimates(midi_path: str):
     # Sort and make contiguous: set each start = previous end
     entries.sort(key=lambda x: x[0])
 
-    # Deduplicate entries with the same start time, keeping the first
-    deduped = []
-    for entry in entries:
-        if deduped and entry[0] == deduped[-1][0]:
-            continue
-        deduped.append(entry)
+    # Clip each entry's end to the next entry's start to remove overlaps,
+    # then force contiguous
+    clipped = []
+    for i, (start, end, label) in enumerate(entries):
+        if i + 1 < len(entries):
+            end = min(end, entries[i + 1][0])
+        clipped.append((start, end, label))
 
     intervals = []
     labels = []
-    for start, end, label in deduped:
-        if intervals:
-            start = intervals[-1][1]  # force contiguous
+    prev_end = None
+    for start, end, label in clipped:
+        if prev_end is not None:
+            start = prev_end  # force contiguous
         if end - start < 1e-6:
             continue
         intervals.append([start, end])
         labels.append(label)
+        prev_end = end
 
     return np.array(intervals, dtype=float), labels
 
