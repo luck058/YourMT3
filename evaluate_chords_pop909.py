@@ -66,32 +66,58 @@ def music21_chord_to_mir_eval(root, quality: str) -> str:
 def midi_to_chord_estimates(midi_path: str):
     """
     Use music21 to chordify a MIDI file.
-    Returns (intervals, labels) for mir_eval.
+    Returns (intervals, labels) for mir_eval, with contiguous intervals.
     """
     score = music21.converter.parse(midi_path)
     chordified = score.chordify()
 
-    intervals = []
-    labels = []
+    # Build a tempo map: list of (offset_in_qn, tempo_in_bpm)
+    # so we can convert quarter-note offsets to seconds accurately.
+    def offset_to_seconds(offset_qn, tempo_map):
+        """Convert a quarter-note offset to seconds using the tempo map."""
+        secs = 0.0
+        prev_offset, prev_tempo = tempo_map[0]
+        for (cur_offset, cur_tempo) in tempo_map[1:]:
+            if offset_qn <= cur_offset:
+                break
+            secs += (min(offset_qn, cur_offset) - prev_offset) * (60.0 / prev_tempo)
+            prev_offset, prev_tempo = cur_offset, cur_tempo
+        secs += (offset_qn - prev_offset) * (60.0 / prev_tempo)
+        return secs
 
+    tempo_map = []
+    for mm in chordified.flatten().getElementsByClass('MetronomeMark'):
+        tempo_map.append((mm.offset, mm.number))
+    if not tempo_map:
+        tempo_map = [(0.0, 120.0)]
+
+    entries = []
     for elem in chordified.flatten().getElementsByClass(['Chord', 'Rest']):
-        try:
-            start_sec = float(elem.getOffsetInHierarchy(chordified))
-            end_sec = start_sec + float(elem.seconds)
-        except Exception:
+        offset_qn = float(elem.offset)
+        dur_qn = float(elem.duration.quarterLength)
+        if dur_qn <= 0:
             continue
-
-        if end_sec <= start_sec:
-            continue
-
+        start_sec = offset_to_seconds(offset_qn, tempo_map)
+        end_sec = offset_to_seconds(offset_qn + dur_qn, tempo_map)
         if isinstance(elem, music21.chord.Chord):
             label = music21_chord_to_mir_eval(elem.root(), elem.quality)
-        elif isinstance(elem, music21.note.Rest):
-            label = 'N'
         else:
-            continue
+            label = 'N'
+        entries.append((start_sec, end_sec, label))
 
-        intervals.append([start_sec, end_sec])
+    if not entries:
+        return np.array([], dtype=float).reshape(0, 2), []
+
+    # Sort and make contiguous: set each start = previous end
+    entries.sort(key=lambda x: x[0])
+    intervals = []
+    labels = []
+    for i, (start, end, label) in enumerate(entries):
+        if intervals:
+            start = intervals[-1][1]  # force contiguous
+        if end <= start:
+            continue
+        intervals.append([start, end])
         labels.append(label)
 
     return np.array(intervals, dtype=float), labels
