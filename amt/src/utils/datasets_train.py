@@ -24,7 +24,8 @@ from torch.utils.data import DataLoader, Dataset, Sampler
 from config.config import shared_cfg
 from config.config import audio_cfg as default_audio_cfg
 from utils.audio import get_segments_from_numpy_array, load_audio_file
-from utils.piano_roll_utils import notes_to_piano_roll
+from utils.chord_utils import (chord_file_from_audio_file, load_chord_intervals,
+                               chord_intervals_to_frame_labels)
 from utils.augment import (audio_random_submix_processor, combined_survival_and_stop, cross_stem_augment_processor,
                            intra_stem_augment_processor)
 from utils.note2event import slice_multiple_note_events_and_ties_to_bundle, slice_note_events_and_ties
@@ -198,7 +199,7 @@ class CachedAudioDataset(Dataset):
         self.num_cached_seg_per_file = sub_batch_size
         print(f'📘 caching {self.num_cached_seg_per_file} segments per file.')
 
-        # Piano roll label config for FFNNPianoRollDecoder training (None = disabled)
+        # Chord label config for FFNNChordDecoder training (None = disabled)
         self.piano_roll_cfg = piano_roll_cfg
 
         # initialize cache
@@ -242,26 +243,24 @@ class CachedAudioDataset(Dataset):
         #   task_token_array: (sub_b, decoding_ch, max_task_token_len)
         #   pitch_shift_steps: (sub_b,)
         if self.piano_roll_cfg is not None:
-            pr_cfg = self.piano_roll_cfg
+            ch_cfg = self.piano_roll_cfg
             start_times = sampled_data['note_event_segments']['start_times']
-            rolls = [
-                notes_to_piano_roll(
-                    notes=notes,
-                    start_time=start_time,
-                    duration=self.seg_len_sec,
-                    programs=pr_cfg['programs'],
-                    n_frames=pr_cfg['n_frames'],
-                    pitch_min=pr_cfg['pitch_min'],
-                    pitch_max=pr_cfg['pitch_max'],
+            # chord_intervals is a list-of-lists: one entry per segment, each holding
+            # the [(start, end, class_idx), ...] intervals for that segment's source file.
+            intervals_per_seg = sampled_data.get('chord_intervals', [[] for _ in start_times])
+            labels = [
+                torch.from_numpy(
+                    chord_intervals_to_frame_labels(intervals, ch_cfg['n_frames'],
+                                                    self.seg_len_sec, start_time=st)
                 )
-                for notes, start_time in zip(sampled_data['notes'], start_times)
+                for intervals, st in zip(intervals_per_seg, start_times)
             ]
-            piano_roll_labels = torch.stack(rolls, dim=0)  # (sub_b, n_frames, n_inst, n_pitch)
+            chord_labels = torch.stack(labels, dim=0).long()  # (sub_b, n_frames)
             return (
                 torch.FloatTensor(processed_audio_array),
                 torch.LongTensor(token_array),
                 torch.LongTensor(pitch_shift_steps),
-                piano_roll_labels,
+                chord_labels,
             )
 
         return torch.FloatTensor(processed_audio_array), torch.LongTensor(token_array), torch.LongTensor(
@@ -386,7 +385,7 @@ class CachedAudioDataset(Dataset):
             'is_drum_segments': [],  # list of List[bool]
             'has_stems_segments': [],  # List[bool]
             'has_unannotated_segments': [],  # List[bool]
-            'notes': [],  # list of List[Note], one entry per segment (whole-file list, filtered by notes_to_piano_roll)
+            'chord_intervals': [],  # list-of-lists: one List[(start,end,cls)] per segment
         }
 
         # random choice of files from cache
@@ -424,11 +423,9 @@ class CachedAudioDataset(Dataset):
             sampled_data['is_drum_segments'].append(d['is_drum'])
             sampled_data['has_stems_segments'].append(d['has_stems'])
             sampled_data['has_unannotated_segments'].append(d['has_unannotated'])
-            # Repeat the whole-file note list once per segment read from this file
-            if d['notes'] is not None:
-                sampled_data['notes'].extend([d['notes']] * self.seg_read_size)
-            else:
-                sampled_data['notes'].extend([[] for _ in range(self.seg_read_size)])
+            # Repeat the whole-file chord intervals once per segment read from this file
+            file_intervals = d['chord_intervals'] if d['chord_intervals'] is not None else []
+            sampled_data['chord_intervals'].extend([file_intervals] * self.seg_read_size)
         return sampled_data, sampled_ids  # Note that the data returned is mutable instance.
 
     def _update_cache(self, index) -> None:
@@ -439,7 +436,7 @@ class CachedAudioDataset(Dataset):
             'has_unannotated': None,
             'audio_array': None,  # (n_segs, n_stems, n_frames): non-stem dataset has n_stems=1
             'note_event_segments': None,  # NoteEventBundle dataclass
-            'notes': None,  # List[Note] for the whole file, used by FFNNPianoRollDecoder
+            'chord_intervals': None,  # List[(start, end, class_idx)] for the whole file
         }
 
         # Load Audio stems -> slice -> (audio_segments, start_times)
@@ -523,18 +520,14 @@ class CachedAudioDataset(Dataset):
         data['audio_array'] = audio_segments  # (n_segs, n_stems, n_frames)
         data['note_event_segments'] = note_event_segments  # NoteEventBundle dataclass
 
-        # Load Note objects for the FFNN piano roll path.
-        # The *_notes.npy file (created by all preprocessors) uses the same stem
-        # as the note_events_file but with a different suffix.
+        # Load chord intervals for the FFNN chord prediction path.
         if self.piano_roll_cfg is not None:
-            notes_file_path = self.file_list[index]['note_events_file'].replace(
-                '_note_events.npy', '_notes.npy'
-            )
+            audio_file = self.file_list[index].get('mix_audio_file', '')
+            chord_file = chord_file_from_audio_file(audio_file) if audio_file else None
             try:
-                notes_data = np.load(notes_file_path, allow_pickle=True, fix_imports=False).tolist()
-                data['notes'] = notes_data['notes']  # List[Note] for the whole file
-            except (FileNotFoundError, KeyError):
-                data['notes'] = []  # graceful fallback: segment will produce all-zero labels
+                data['chord_intervals'] = load_chord_intervals(chord_file) if chord_file else []
+            except (FileNotFoundError, OSError):
+                data['chord_intervals'] = []  # graceful fallback: all frames → NO_CHORD
 
         # Update the cache
         unique_id = self.cache.generate_unique_id()
@@ -567,14 +560,14 @@ def collate_fn(batch: Tuple[torch.FloatTensor, torch.LongTensor],
     This function is used to get the final batch size
     batch: (np.ndarray of shape (B, b, 1, T), np.ndarray of shape (B, b, T))
            where b is the sub-batch size and B is the batch size.
-    When piano_roll_labels are present (FFNN decoder path), each item in batch
-    is a 4-tuple and the labels are stacked into a (B*b, T', I, P) tensor.
+    When chord_labels are present (FFNN decoder path), each item in batch
+    is a 4-tuple and the labels are stacked into a (B*b, T') tensor.
     """
     audio_segments = torch.vstack([b[0] for b in batch])
     note_tokens = torch.vstack([b[1] for b in batch])
     if len(batch[0]) > 3:
-        piano_roll_labels = torch.vstack([b[3] for b in batch])
-        return (audio_segments, note_tokens, piano_roll_labels)
+        chord_labels = torch.vstack([b[3] for b in batch])
+        return (audio_segments, note_tokens, chord_labels)
     return (audio_segments, note_tokens)
 
 

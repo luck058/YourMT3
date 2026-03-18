@@ -140,6 +140,7 @@ class AudioFileDataset(Dataset):
 
         # TODO: add midi_file path in preprocessing instead of here
         notes_dict['midi_file'] = metadata['midi_file']
+        notes_dict['mix_audio_file'] = metadata['mix_audio_file']
 
         # tokenize note_events
         note_events_dict = np.load(note_events_file, allow_pickle=True, fix_imports=False).tolist()

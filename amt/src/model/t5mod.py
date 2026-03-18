@@ -668,36 +668,26 @@ class MultiChannelT5Decoder(T5PreTrainedModel):
             return decoder_outputs  # ['last_hidden_state']: (B, K, T, D)
 
 
-class FFNNPianoRollDecoder(nn.Module):
+class FFNNChordDecoder(nn.Module):
     """
-    Frame-level feed-forward decoder.
-    Input:  (B, T', D)                        encoder hidden states
-    Output: (B, T', n_instruments, n_pitches)  raw logits
+    Frame-level feed-forward chord classification decoder.
+    Input:  (B, T', D)               encoder hidden states
+    Output: (B, T', n_chord_classes)  raw logits (for CrossEntropyLoss)
     """
     def __init__(
         self,
         d_model: int,
-        instruments: Dict[str, int],   # name → MIDI program, dict order = tensor index
-        pitch_min: int = 21,
-        pitch_max: int = 108,
+        n_chord_classes: int = 25,
         hidden_dim: int = 256,
         dropout: float = 0.1,
     ):
         super().__init__()
-        self.instruments = instruments
-        self.program_to_idx = {prog: idx for idx, prog in enumerate(instruments.values())}
-        self.pitch_min = pitch_min
-        self.pitch_max = pitch_max
-        self.n_instruments = len(instruments)
-        self.n_pitches = pitch_max - pitch_min + 1  # 88 for standard piano range
-
-        # d_model → hidden_dim → (n_instruments × n_pitches)
+        self.n_chord_classes = n_chord_classes
         self.mlp = nn.Sequential(
             nn.Linear(d_model, hidden_dim),
             nn.GELU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim, self.n_instruments * self.n_pitches),
-            # No sigmoid — raw logits returned for use with BCEWithLogitsLoss
+            nn.Linear(hidden_dim, n_chord_classes),
         )
 
     def forward(self, encoder_hidden_states: torch.Tensor) -> torch.Tensor:
@@ -705,11 +695,9 @@ class FFNNPianoRollDecoder(nn.Module):
         Args:
             encoder_hidden_states: (B, T', D)
         Returns:
-            logits: (B, T', n_instruments, n_pitches)
+            logits: (B, T', n_chord_classes)
         """
-        B, T, D = encoder_hidden_states.shape
-        flat_logits = self.mlp(encoder_hidden_states)            # (B, T', n_inst * n_pitch)
-        return flat_logits.view(B, T, self.n_instruments, self.n_pitches)
+        return self.mlp(encoder_hidden_states)
 
 
 def test_multi_channel_t5_decoder():

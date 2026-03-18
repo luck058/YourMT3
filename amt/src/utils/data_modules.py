@@ -90,7 +90,7 @@ class AMTDataModule(LightningDataModule):
         # audio config
         self.audio_cfg = audio_cfg if audio_cfg is not None else default_audio_cfg
 
-        # piano roll config for FFNNPianoRollDecoder training (None = disabled)
+        # chord label config for FFNNChordDecoder training (None = disabled)
         self.piano_roll_cfg = piano_roll_cfg
 
     def set_merged_train_data_info(self) -> None:
@@ -128,8 +128,7 @@ class AMTDataModule(LightningDataModule):
                                                             dataset_weights=self.train_data_info["dataset_weights"],
                                                             dataset_index_ranges=self.train_data_info["index_ranges"],
                                                             num_samples_per_epoch=actual_train_num_samples_per_epoch)
-            # Resolve piano_roll_cfg: if a partial dict was passed (e.g. without n_frames),
-            # compute n_frames from audio_cfg automatically.
+            # Resolve chord_cfg: auto-compute n_frames from audio_cfg if not provided.
             resolved_piano_roll_cfg = None
             if self.piano_roll_cfg is not None:
                 resolved_piano_roll_cfg = dict(self.piano_roll_cfg)

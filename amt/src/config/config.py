@@ -130,16 +130,10 @@ model_cfg = {
 }
 
 model_cfg["decoder"]["ffnn"] = {
-    "instruments": {
-        "Piano":  0,    # Acoustic Grand Piano
-        "Violin": 40,   # Violin
-    },
-    "pitch_min": 21,    # piano A0
-    "pitch_max": 108,   # piano C8
+    "n_chord_classes": 25,  # 12 major + 12 minor + 1 no-chord (N)
     "hidden_dim": 256,
     "dropout": 0.1,
-    "pos_weight": 10.0, # tune with compute_pos_weight() on training set
-    "threshold": 0.5,   # sigmoid threshold for inference; tune on val set after training
+    "threshold": 0.5,       # minimum softmax probability to accept top-1 prediction; tune on val set
 }
 # yapf: enable
 shared_cfg = {

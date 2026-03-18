@@ -22,10 +22,10 @@ import wandb
 from einops import rearrange
 
 from transformers import T5Config
-from model.t5mod import T5EncoderYMT3, T5DecoderYMT3, MultiChannelT5Decoder, FFNNPianoRollDecoder
+from model.t5mod import T5EncoderYMT3, T5DecoderYMT3, MultiChannelT5Decoder, FFNNChordDecoder
 from model.t5mod_helper import task_cond_dec_generate
-from utils.piano_roll_utils import (batch_notes_to_piano_roll, piano_roll_to_note_list,
-                                     piano_roll_tuples_to_notes)
+from utils.chord_utils import (chord_file_from_audio_file, load_chord_intervals,
+                                chord_intervals_to_frame_labels, CHORD_NAMES, NO_CHORD_IDX)
 from model.perceiver_mod import PerceiverTFEncoder
 from model.perceiver_helper import PerceiverTFConfig
 from model.conformer_mod import ConformerYMT3Encoder
@@ -227,7 +227,7 @@ class YourMT3(pl.LightningModule):
                                                             proj_type=self.pre_decoder_type)
             self.pre_decoder.append(proj_layer)
         elif self.decoder_type == "ffnn":
-            pass  # FFNNPianoRollDecoder reads encoder hidden states directly via its own Linear
+            pass  # FFNNChordDecoder reads encoder hidden states directly via its own Linear
         else:
             raise NotImplementedError(
                 f"Encoder type {self.encoder_type} and decoder type {self.decoder_type} is not implemented yet.")
@@ -329,11 +329,9 @@ class YourMT3(pl.LightningModule):
         elif self.decoder_type == "ffnn":
             ffnn_cfg = self.model_cfg["decoder"]["ffnn"]
             encoder_d_model = self.model_cfg["encoder"][self.encoder_type]["d_model"]
-            self.decoder = FFNNPianoRollDecoder(
+            self.decoder = FFNNChordDecoder(
                 d_model=encoder_d_model,
-                instruments=ffnn_cfg["instruments"],
-                pitch_min=ffnn_cfg["pitch_min"],
-                pitch_max=ffnn_cfg["pitch_max"],
+                n_chord_classes=ffnn_cfg["n_chord_classes"],
                 hidden_dim=ffnn_cfg["hidden_dim"],
                 dropout=ffnn_cfg["dropout"],
             )
@@ -441,7 +439,7 @@ class YourMT3(pl.LightningModule):
             self,
             x: torch.FloatTensor,
             target_tokens: torch.LongTensor,
-            piano_roll_labels: Optional[torch.FloatTensor] = None,
+            chord_labels: Optional[torch.LongTensor] = None,
             **kwargs) -> Dict:
         """ Forward pass with teacher-forcing for training and validation.
         Args:
@@ -470,7 +468,7 @@ class YourMT3(pl.LightningModule):
 
         # ADD: ffnn dispatch
         if self.decoder_type == "ffnn":
-            return self._ffnn_forward(enc_hs, piano_roll_labels)
+            return self._ffnn_forward(enc_hs, chord_labels)
 
         # existing t5/multi-t5 code continues unchanged...
 
@@ -500,30 +498,28 @@ class YourMT3(pl.LightningModule):
     
     def _ffnn_forward(self,
                       enc_hs: torch.FloatTensor,
-                      piano_roll_labels: Optional[torch.FloatTensor] = None) -> Dict:
+                      chord_labels: Optional[torch.LongTensor] = None) -> Dict:
         """
         Args:
-            enc_hs:            (B, T', D)
-            piano_roll_labels: (B, T', n_instruments, n_pitches) or None
+            enc_hs:       (B, T', D)
+            chord_labels: (B, T') integer class indices, or None
         Returns:
-            {"logits": (B, T', n_instruments, n_pitches), "loss": scalar or None}
+            {"logits": (B, T', n_chord_classes), "loss": scalar or None}
         """
-        logits = self.decoder(enc_hs)  # (B, T', n_instruments, n_pitches)
+        logits = self.decoder(enc_hs)  # (B, T', n_chord_classes)
 
         loss = None
-        if piano_roll_labels is not None:
-            piano_roll_labels = piano_roll_labels.to(logits.device)
-            if logits.shape != piano_roll_labels.shape:
+        if chord_labels is not None:
+            chord_labels = chord_labels.to(logits.device)
+            B, T, C = logits.shape
+            if chord_labels.shape != (B, T):
                 raise ValueError(
-                    f"Shape mismatch: logits {tuple(logits.shape)} vs "
-                    f"piano_roll_labels {tuple(piano_roll_labels.shape)}. "
-                    f"Update compute_n_frames_from_audio_cfg() or set "
-                    f"model_cfg['decoder']['ffnn']['n_frames'] explicitly."
+                    f"chord_labels shape {tuple(chord_labels.shape)} does not match "
+                    f"logits (B={B}, T'={T}). Verify that n_frames in chord_cfg matches "
+                    f"the encoder output length. Expected chord_labels shape: ({B}, {T})."
                 )
-            ffnn_cfg = self.model_cfg["decoder"]["ffnn"]
-            pos_weight = torch.tensor(ffnn_cfg["pos_weight"], device=logits.device)
-            loss_fct = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-            loss = loss_fct(logits, piano_roll_labels)
+            loss_fct = nn.CrossEntropyLoss()
+            loss = loss_fct(logits.view(B * T, C), chord_labels.view(B * T))
 
         return {"logits": logits, "loss": loss}
 
@@ -558,11 +554,10 @@ class YourMT3(pl.LightningModule):
         enc_hs = self.encoder(inputs_embeds=x)["last_hidden_state"]
         enc_hs = self.pre_decoder(enc_hs)
 
-        # ADD: ffnn inference returns a binary piano roll, not token ids
+        # ADD: ffnn inference returns per-frame chord class indices
         if self.decoder_type == "ffnn":
-            logits = self.decoder(enc_hs)                          # (B, T', n_instruments, n_pitches)
-            threshold = self.model_cfg["decoder"]["ffnn"].get("threshold", 0.5)
-            return (torch.sigmoid(logits) >= threshold).to(torch.uint8)
+            logits = self.decoder(enc_hs)   # (B, T', n_chord_classes)
+            return torch.argmax(logits, dim=-1)  # (B, T')
 
         # existing autoregressive path continues unchanged...
 
@@ -669,17 +664,17 @@ class YourMT3(pl.LightningModule):
         # 'dataset1': Tuple[audio_segments(b, 1, t), tokens(b, ch, max_token_len), pshift(b), ...]
         # 'dataset2': ...
         # }
-        # When decoder_type=="ffnn", each tuple has a 4th element: piano_roll_labels (b, T', I, P).
+        # When decoder_type=="ffnn", each tuple has a 4th element: chord_labels (b, T').
         batch_tuples = list(zip(*batch.values()))
         audio_segments = torch.cat(batch_tuples[0], dim=0)
         note_tokens    = torch.cat(batch_tuples[1], dim=0)
         pshift_steps   = torch.cat(batch_tuples[2], dim=0)
-        piano_roll_labels = torch.cat(batch_tuples[3], dim=0) if len(batch_tuples) > 3 else None
+        chord_labels = torch.cat(batch_tuples[3], dim=0) if len(batch_tuples) > 3 else None
 
         if self.pitchshift is not None and self.decoder_type != "ffnn":
             # Pitch shift audio and note tokens together.
-            # Skipped for the FFNN path because piano_roll_labels are not pitch-shifted
-            # (the piano roll is built from original Note objects in the data loader),
+            # Skipped for the FFNN path because chord_labels are not pitch-shifted
+            # (chord labels are built from annotation files keyed to the original audio),
             # so shifting the audio without shifting the labels would corrupt the loss.
             n_groups = len(batch)
             audio_segments = torch.chunk(audio_segments, n_groups, dim=0)
@@ -691,13 +686,13 @@ class YourMT3(pl.LightningModule):
                                        dim=0)
 
         if self.decoder_type == "ffnn":
-            if piano_roll_labels is None:
+            if chord_labels is None:
                 raise RuntimeError(
-                    "FFNN training_step: piano_roll_labels is None. "
-                    "Ensure AMTDataModule is initialized with piano_roll_cfg "
-                    "(set decoder_type='ffnn' in model_cfg and pass piano_roll_cfg to AMTDataModule)."
+                    "FFNN training_step: chord_labels is None. "
+                    "Ensure AMTDataModule is initialized with chord_cfg "
+                    "(set decoder_type='ffnn' in model_cfg and pass chord_cfg to AMTDataModule)."
                 )
-            loss = self(audio_segments, note_tokens, piano_roll_labels=piano_roll_labels)['loss']
+            loss = self(audio_segments, note_tokens, chord_labels=chord_labels)['loss']
             self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True,
                      batch_size=audio_segments.shape[0], sync_dist=True)
             return loss
@@ -800,111 +795,21 @@ class YourMT3(pl.LightningModule):
         # self.val_metrics[dataloader_idx].bulk_update_errors({'decoding_time': decoding_time_sec})
     
     def _ffnn_validation_step(self, audio_segments, notes_dict, dataloader_idx=0) -> None:
-        ffnn_cfg = self.model_cfg["decoder"]["ffnn"]
-        programs = list(ffnn_cfg["instruments"].values())
         segment_duration = self.audio_cfg["input_frames"] / self.audio_cfg["sample_rate"]
-        threshold = ffnn_cfg.get("threshold", 0.5)
+
+        # Load chord intervals for this song from its annotation file.
+        chord_intervals = []
+        audio_file = notes_dict.get('mix_audio_file', '')
+        chord_file = chord_file_from_audio_file(audio_file) if audio_file else None
+        if chord_file and os.path.exists(chord_file):
+            chord_intervals = load_chord_intervals(chord_file)
 
         n_items = audio_segments.shape[0]
         bsz = self.shared_cfg["BSZ"]["validation"]
         total_loss = 0.0
+        total_correct = 0
+        total_frames = 0
         logged_shape = False
-
-        for i in range(0, n_items, bsz):
-            x = audio_segments[i:i + bsz].to(self.device)
-            batch_size = x.shape[0]
-            start_times = [i * segment_duration + j * segment_duration for j in range(batch_size)]
-
-            # Run encoder first to get actual T' before building labels
-            with torch.no_grad():
-                x_spec = self.spectrogram(x)
-                x_spec = self.pre_encoder(x_spec)
-                enc_hs = self.encoder(inputs_embeds=x_spec)["last_hidden_state"]
-                enc_hs = self.pre_decoder(enc_hs)  # noop for ffnn, but keeps pipeline consistent
-
-            n_frames = enc_hs.shape[1]  # T' — inferred at runtime, not hardcoded
-
-            # Log T' once per file on first validation to help verify time resolution (TODO #5)
-            if not logged_shape and self.global_rank == 0:
-                print(f"[FFNN] encoder output T'={n_frames}, "
-                      f"segment_duration={segment_duration:.4f}s, "
-                      f"frames/sec={n_frames / segment_duration:.2f}")
-                logged_shape = True
-
-            piano_roll_labels = batch_notes_to_piano_roll(
-                batch_notes=[notes_dict['notes']] * batch_size,
-                start_times=start_times,
-                duration=segment_duration,
-                programs=programs,
-                n_frames=n_frames,
-                pitch_min=ffnn_cfg["pitch_min"],
-                pitch_max=ffnn_cfg["pitch_max"],
-            ).to(self.device)
-
-            with torch.no_grad():
-                logits = self.decoder(enc_hs)
-                pos_weight = torch.tensor(ffnn_cfg["pos_weight"], device=self.device)
-                loss_fct = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-                loss = loss_fct(logits, piano_roll_labels)
-                total_loss += loss.item() * (batch_size / n_items)
-
-                # Binary predictions for note-level F1
-                pred_binary = (torch.sigmoid(logits) >= threshold).cpu()
-
-            # Convert predicted binary piano rolls to Note objects and compute F1
-            for j in range(batch_size):
-                seg_start = start_times[j]
-                seg_end = seg_start + segment_duration
-
-                pred_tuples = piano_roll_to_note_list(
-                    piano_roll=pred_binary[j],
-                    programs=programs,
-                    start_time=seg_start,
-                    duration=segment_duration,
-                    pitch_min=ffnn_cfg["pitch_min"],
-                )
-                pred_notes = piano_roll_tuples_to_notes(pred_tuples)
-
-                # Reference notes for this segment (non-drum, tracked programs, within time window)
-                ref_notes = [
-                    n for n in notes_dict['notes']
-                    if not n.is_drum
-                    and n.program in programs
-                    and n.onset < seg_end
-                    and n.offset > seg_start
-                ]
-
-                drum_metric, non_drum_metric, instr_metric = compute_track_metrics(
-                    pred_notes,
-                    ref_notes,
-                    eval_vocab=self.hparams.eval_vocab[dataloader_idx],
-                    eval_drum_vocab=self.hparams.eval_drum_vocab,
-                    onset_tolerance=self.hparams.onset_tolerance,
-                    add_pitch_class_metric=self.hparams.add_pitch_class_metric,
-                )
-                self.val_metrics[dataloader_idx].bulk_update(non_drum_metric)
-                self.val_metrics_macro.bulk_update(non_drum_metric)
-
-        self.log('val_loss', total_loss, prog_bar=True, batch_size=n_items, sync_dist=True)
-        
-    def on_validation_epoch_end(self) -> None:
-        # val_loss is already logged per-step in _ffnn_validation_step;
-        # F1 metrics are accumulated per-segment and logged here.
-        for val_metrics in self.val_metrics:
-            self.log_dict(val_metrics.bulk_compute(), sync_dist=True)
-            val_metrics.bulk_reset()
-        self.log_dict(self.val_metrics_macro.bulk_compute(), sync_dist=True)
-        self.val_metrics_macro.bulk_reset()
-
-    def _ffnn_test_step(self, audio_segments, notes_dict, dataloader_idx=0) -> None:
-        """Test-time evaluation for FFNNPianoRollDecoder: same pipeline as validation."""
-        ffnn_cfg = self.model_cfg["decoder"]["ffnn"]
-        programs = list(ffnn_cfg["instruments"].values())
-        segment_duration = self.audio_cfg["input_frames"] / self.audio_cfg["sample_rate"]
-        threshold = ffnn_cfg.get("threshold", 0.5)
-
-        n_items = audio_segments.shape[0]
-        bsz = self.shared_cfg["BSZ"]["validation"]
 
         for i in range(0, n_items, bsz):
             x = audio_segments[i:i + bsz].to(self.device)
@@ -916,39 +821,91 @@ class YourMT3(pl.LightningModule):
                 x_spec = self.pre_encoder(x_spec)
                 enc_hs = self.encoder(inputs_embeds=x_spec)["last_hidden_state"]
                 enc_hs = self.pre_decoder(enc_hs)
-                logits = self.decoder(enc_hs)
-                pred_binary = (torch.sigmoid(logits) >= threshold).cpu()
 
-            for j in range(batch_size):
-                seg_start = start_times[j]
-                seg_end = seg_start + segment_duration
+            n_frames = enc_hs.shape[1]
 
-                pred_tuples = piano_roll_to_note_list(
-                    piano_roll=pred_binary[j],
-                    programs=programs,
-                    start_time=seg_start,
-                    duration=segment_duration,
-                    pitch_min=ffnn_cfg["pitch_min"],
-                )
-                pred_notes = piano_roll_tuples_to_notes(pred_tuples)
+            if not logged_shape and self.global_rank == 0:
+                print(f"[FFNN] encoder output T'={n_frames}, "
+                      f"segment_duration={segment_duration:.4f}s, "
+                      f"frames/sec={n_frames / segment_duration:.2f}")
+                logged_shape = True
 
-                ref_notes = [
-                    n for n in notes_dict['notes']
-                    if not n.is_drum
-                    and n.program in programs
-                    and n.onset < seg_end
-                    and n.offset > seg_start
-                ]
+            label_list = [
+                chord_intervals_to_frame_labels(chord_intervals, n_frames,
+                                                segment_duration, start_time=st)
+                for st in start_times
+            ]
+            chord_labels = torch.from_numpy(
+                np.stack(label_list, axis=0)
+            ).long().to(self.device)  # (batch_size, n_frames)
 
-                drum_metric, non_drum_metric, instr_metric = compute_track_metrics(
-                    pred_notes,
-                    ref_notes,
-                    eval_vocab=self.hparams.eval_vocab[dataloader_idx],
-                    eval_drum_vocab=self.hparams.eval_drum_vocab,
-                    onset_tolerance=self.hparams.onset_tolerance,
-                    add_pitch_class_metric=self.hparams.add_pitch_class_metric,
-                )
-                self.test_metrics[dataloader_idx].bulk_update(non_drum_metric)
+            with torch.no_grad():
+                logits = self.decoder(enc_hs)   # (batch_size, n_frames, n_chord_classes)
+                B, T, C = logits.shape
+                loss_fct = nn.CrossEntropyLoss()
+                loss = loss_fct(logits.view(B * T, C), chord_labels.view(B * T))
+                total_loss += loss.item() * (batch_size / n_items)
+
+                pred_classes = torch.argmax(logits, dim=-1)  # (batch_size, n_frames)
+                total_correct += (pred_classes == chord_labels).sum().item()
+                total_frames += B * T
+
+        chord_acc = total_correct / total_frames if total_frames > 0 else 0.0
+        self.log('val_loss', total_loss, prog_bar=True, batch_size=n_items, sync_dist=True)
+        self.log('val_chord_acc', chord_acc, prog_bar=True, batch_size=n_items, sync_dist=True)
+        
+    def on_validation_epoch_end(self) -> None:
+        # val_loss is already logged per-step in _ffnn_validation_step;
+        # F1 metrics are accumulated per-segment and logged here.
+        for val_metrics in self.val_metrics:
+            self.log_dict(val_metrics.bulk_compute(), sync_dist=True)
+            val_metrics.bulk_reset()
+        self.log_dict(self.val_metrics_macro.bulk_compute(), sync_dist=True)
+        self.val_metrics_macro.bulk_reset()
+
+    def _ffnn_test_step(self, audio_segments, notes_dict, dataloader_idx=0) -> None:
+        """Test-time evaluation for FFNNChordDecoder: same pipeline as validation."""
+        segment_duration = self.audio_cfg["input_frames"] / self.audio_cfg["sample_rate"]
+
+        chord_intervals = []
+        audio_file = notes_dict.get('mix_audio_file', '')
+        chord_file = chord_file_from_audio_file(audio_file) if audio_file else None
+        if chord_file and os.path.exists(chord_file):
+            chord_intervals = load_chord_intervals(chord_file)
+
+        n_items = audio_segments.shape[0]
+        bsz = self.shared_cfg["BSZ"]["validation"]
+        total_correct = 0
+        total_frames = 0
+
+        for i in range(0, n_items, bsz):
+            x = audio_segments[i:i + bsz].to(self.device)
+            batch_size = x.shape[0]
+            start_times = [i * segment_duration + j * segment_duration for j in range(batch_size)]
+
+            with torch.no_grad():
+                x_spec = self.spectrogram(x)
+                x_spec = self.pre_encoder(x_spec)
+                enc_hs = self.encoder(inputs_embeds=x_spec)["last_hidden_state"]
+                enc_hs = self.pre_decoder(enc_hs)
+                logits = self.decoder(enc_hs)   # (batch_size, n_frames, n_chord_classes)
+
+            n_frames = enc_hs.shape[1]
+            label_list = [
+                chord_intervals_to_frame_labels(chord_intervals, n_frames,
+                                                segment_duration, start_time=st)
+                for st in start_times
+            ]
+            chord_labels = torch.from_numpy(
+                np.stack(label_list, axis=0)
+            ).long().to(self.device)
+
+            pred_classes = torch.argmax(logits, dim=-1)
+            total_correct += (pred_classes == chord_labels).sum().item()
+            total_frames += pred_classes.numel()
+
+        chord_acc = total_correct / total_frames if total_frames > 0 else 0.0
+        self.log('test_chord_acc', chord_acc, prog_bar=True, batch_size=n_items, sync_dist=True)
 
     def test_step(self, batch, batch_idx, dataloader_idx=0) -> Dict:
         if self.decoder_type == "ffnn":
