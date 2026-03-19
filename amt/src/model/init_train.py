@@ -69,6 +69,9 @@ def initialize_trainer(args: argparse.Namespace,
     # define checkpoint callback
     checkpoint_dir = os.path.join(lightning_dir, "checkpoints")
     checkpoint_cfg = {k: v for k, v in shared_cfg["CHECKPOINT"].items() if k != "periodic_save_every_n_epochs"}
+    if getattr(args, 'decoder_type', None) == 'ffnn':
+        checkpoint_cfg['monitor'] = 'val_chord_acc'
+        checkpoint_cfg['mode'] = 'max'
     checkpoint_callback = ModelCheckpoint(
         dirpath=checkpoint_dir,
         **checkpoint_cfg,

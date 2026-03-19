@@ -160,13 +160,7 @@ def main():
 
     piano_roll_cfg = None
     if model_cfg.get("decoder_type") == "ffnn":
-        ffnn_cfg = model_cfg["decoder"]["ffnn"]
-        piano_roll_cfg = {
-            "programs": list(ffnn_cfg["instruments"].values()),
-            "pitch_min": ffnn_cfg["pitch_min"],
-            "pitch_max": ffnn_cfg["pitch_max"],
-            "n_frames": None,  # resolved from audio_cfg at setup time
-        }
+        piano_roll_cfg = {"n_frames": None}
 
     dm = AMTDataModule(data_preset_multi=data_preset,
                        task_manager=tm,
