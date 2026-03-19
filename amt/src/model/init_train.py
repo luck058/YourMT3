@@ -11,6 +11,7 @@
 from typing import Tuple, Literal, Any
 from copy import deepcopy
 import os
+import sys
 import argparse
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import WandbLogger
@@ -21,6 +22,27 @@ from config.config import shared_cfg as default_shared_cfg
 from config.config import audio_cfg as default_audio_cfg
 from config.config import model_cfg as default_model_cfg
 from config.config import DEEPSPEED_CFG
+
+
+class PrintProgressCallback(pl.Callback):
+    """Prints training progress to stdout every N steps — readable in SLURM log files."""
+
+    def __init__(self, log_every_n_steps=50):
+        self.log_every_n_steps = log_every_n_steps
+
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        if trainer.global_step % self.log_every_n_steps == 0:
+            metrics = {k: f"{v:.4f}" for k, v in trainer.callback_metrics.items()}
+            metrics_str = "  ".join(f"{k}={v}" for k, v in metrics.items()) if metrics else "—"
+            print(
+                f"[Epoch {trainer.current_epoch} | Step {trainer.global_step}]  {metrics_str}",
+                flush=True,
+            )
+
+    def on_validation_epoch_end(self, trainer, pl_module):
+        metrics = {k: f"{v:.4f}" for k, v in trainer.callback_metrics.items()}
+        metrics_str = "  ".join(f"{k}={v}" for k, v in metrics.items()) if metrics else "—"
+        print(f"[Validation end — Epoch {trainer.current_epoch}]  {metrics_str}", flush=True)
 
 
 def initialize_trainer(args: argparse.Namespace,
@@ -127,8 +149,10 @@ def initialize_trainer(args: argparse.Namespace,
                         max_epochs=args.max_epochs if stage == 'train' else None,
                         max_steps=args.max_steps if stage == 'train' else -1,
                         # logger=wandb_logger,
-                        callbacks=[checkpoint_callback, periodic_checkpoint_callback, lr_monitor],
-                        sync_batchnorm=sync_batchnorm)
+                        callbacks=[checkpoint_callback, periodic_checkpoint_callback, lr_monitor,
+                                   PrintProgressCallback(log_every_n_steps=50)],
+                        sync_batchnorm=sync_batchnorm,
+                        enable_progress_bar=sys.stdout.isatty())
     trainer = pl.trainer.trainer.Trainer(**train_params)
 
     # # Update wandb logger (for DDP)

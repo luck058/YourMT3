@@ -17,6 +17,7 @@ source venv/bin/activate
 mkdir -p logs
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export PYTHONUNBUFFERED=1
 export TMPDIR=/disk/scratch/s2286943/tmp
 mkdir -p $TMPDIR
 
