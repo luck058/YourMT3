@@ -64,11 +64,18 @@ echo "Preprocessing complete at: $(date)"
 echo "--- POP909 validation audio_segments files: $(find "$DATA_HOME/POP909-Dataset/POP909" -name "*_audio_segments.npy" | wc -l) ---"
 echo "--- AAM validation audio_segments files: $(find "$DATA_HOME/AAM" -name "*_audio_segments.npy" | wc -l) ---"
 
-# Copy index files from scratch to the local data dir (training uses ../../data/yourmt3_indexes) or create symlinks if you prefer. This is necessary because the training script expects the index files to be in a specific location.
-mkdir -p /home/s2286943/YourMT3/data/yourmt3_indexes
-cp "$DATA_HOME/yourmt3_indexes/"*.json /home/s2286943/YourMT3/data/yourmt3_indexes/
+# Symlink the index files directory from scratch to where training expects it (../../data/yourmt3_indexes)
+INDEX_LINK="/home/s2286943/YourMT3/data/yourmt3_indexes"
+INDEX_TARGET="$DATA_HOME/yourmt3_indexes"
+if [ ! -L "$INDEX_LINK" ]; then
+    mkdir -p /home/s2286943/YourMT3/data
+    ln -sf "$INDEX_TARGET" "$INDEX_LINK"
+    echo "Created symlink: $INDEX_LINK -> $INDEX_TARGET"
+else
+    echo "Symlink already exists: $INDEX_LINK"
+fi
 echo "--- Index files ---"
-ls /home/s2286943/YourMT3/data/yourmt3_indexes/*.json 2>/dev/null || echo "WARNING: no JSON index files found!"
+ls "$INDEX_LINK"/*.json 2>/dev/null || echo "WARNING: no JSON index files found!"
 
 # ── Step 3: Fine-tune YourMT3+ (frozen encoder, AdamW, equal POP909+AAM) ───
 echo "================================================"
@@ -79,7 +86,7 @@ echo "================================================"
 # The checkpoint must exist at:
 #   amt/logs/2024/notask_all_cross_v6_xk2_amp0811_gm_ext_plus_nops_b72/checkpoints/model.ckpt
 python train.py \
-    "train_pop909_aam" \
+    "train_pop909_aam@model.ckpt" \
     -p 2024 \
     -d pop909_aam \
     -tk mt3_full_plus \
