@@ -200,11 +200,15 @@ def main():
     # last_ckpt_path can be None
     if dir_info["last_ckpt_path"] is not None:
         checkpoint = torch.load(dir_info["last_ckpt_path"], weights_only=False)
-        state_dict = checkpoint['state_dict']
-        model.load_state_dict(state_dict, strict=False)
-        trainer.fit(model, datamodule=dm)
+        if 'optimizer_states' in checkpoint:
+            # Full Lightning checkpoint: restore weights + training state (epoch, step, optimizer, LR)
+            trainer.fit(model, ckpt_path=dir_info["last_ckpt_path"], datamodule=dm)
+        else:
+            # Pretrained weights only: load with strict=False (architecture may differ) then train fresh
+            model.load_state_dict(checkpoint['state_dict'], strict=False)
+            trainer.fit(model, datamodule=dm)
     else:
-        trainer.fit(model, ckpt_path=dir_info["last_ckpt_path"], datamodule=dm)
+        trainer.fit(model, datamodule=dm)
 
 
 if __name__ == "__main__":
