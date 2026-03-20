@@ -102,6 +102,7 @@ python train.py \
     -e 50 \
     -fe True \
     -ps 0 0 \
+    -rid True \
     -pr bf16-mixed \
     -nw 0 \
     -g 1 \

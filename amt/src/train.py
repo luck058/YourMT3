@@ -100,6 +100,7 @@ parser.add_argument('-n', '--num-nodes', type=int, default=1, help='number of no
 parser.add_argument('-g', '--num-gpus', type=str, default='auto', help='number of gpus (default="auto")')
 parser.add_argument('-wb', '--wandb-mode', type=str, default=None, help='wandb mode for logging (default=None). "disabled" or "online" or "offline". If None, default value defined in config.py will be used.')
 parser.add_argument('-fe', '--freeze-encoder', type=str2bool, default=False, help='freeze encoder weights and train only the decoder and LM head (default=False).')
+parser.add_argument('-rid', '--random-init-decoder', type=str2bool, default=False, help='randomly initialise decoder weights even when loading a pretrained checkpoint (default=False).')
 # DataLoader configurations (cluster-safe overrides)
 parser.add_argument('-nw', '--num-workers', type=int, default=None, help='DataLoader num_workers override (default=None, use config.py).')
 parser.add_argument('-pf', '--prefetch-factor', type=int, default=None, help='DataLoader prefetch_factor override (default=None, use config.py).')
@@ -205,7 +206,10 @@ def main():
             trainer.fit(model, ckpt_path=dir_info["last_ckpt_path"], datamodule=dm)
         else:
             # Pretrained weights only: load with strict=False (architecture may differ) then train fresh
-            model.load_state_dict(checkpoint['state_dict'], strict=False)
+            state_dict = checkpoint['state_dict']
+            if args.random_init_decoder:
+                state_dict = {k: v for k, v in state_dict.items() if not k.startswith('decoder.')}
+            model.load_state_dict(state_dict, strict=False)
             trainer.fit(model, datamodule=dm)
     else:
         trainer.fit(model, datamodule=dm)
