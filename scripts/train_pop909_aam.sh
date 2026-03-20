@@ -7,6 +7,10 @@
 #SBATCH --output=logs/train_pop909_aam_%j.out
 #SBATCH --error=logs/train_pop909_aam_%j.err
 
+DEC="${1:-ffnn}"
+EXP_ID="train_pop909_aam_${DEC}"
+echo "Decoder:       $DEC"
+echo "Experiment ID: $EXP_ID"
 echo "Job started at: $(date)"
 echo "Running on node: $(hostname)"
 echo "Job ID: $SLURM_JOB_ID"
@@ -78,20 +82,20 @@ fi
 echo "--- Index files ---"
 ls "$INDEX_LINK"/*.json 2>/dev/null || echo "WARNING: no JSON index files found!"
 
-# ── Step 3: Fine-tune YourMT3+ (frozen encoder, AdamW, equal POP909+AAM) ───
+# ── Step 3: Fine-tune YourMT3+ ──────────────────────────────────────────────
 echo "================================================"
-echo "Step 3: Training..."
+echo "Step 3: Training (decoder=$DEC)..."
 echo "================================================"
 
 # Load the pretrained YourMT3+ checkpoint via exp_id@checkpoint syntax.
 # The checkpoint must exist at:
 #   amt/logs/2024/notask_all_cross_v6_xk2_amp0811_gm_ext_plus_nops_b72/checkpoints/model.ckpt
 python train.py \
-    "train_pop909_aam@model.ckpt" \
+    "${EXP_ID}@model.ckpt" \
     -p 2024 \
     -d pop909_aam \
     -tk mt3_full_plus \
-    -dec ffnn \
+    -dec "$DEC" \
     -o AdamW \
     -lr 1e-4 \
     -bsz 4 8 \
