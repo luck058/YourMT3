@@ -23,7 +23,7 @@ mkdir -p $TMPDIR
 cd amt/src
 
 python test.py \
-    "train_pop909_aam@epoch=49-step=187500.ckpt" \
+    "train_pop909_aam@last.ckpt" \
     -p 2024 \
     -d pop909_aam \
     -tk mt3_full_plus \
