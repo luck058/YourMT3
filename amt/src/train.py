@@ -15,9 +15,13 @@ from utils.data_modules import AMTDataModule
 from utils.task_manager import TaskManager
 
 # PyTorch 2.6 changed torch.load to default weights_only=True, blocking custom
-# classes stored in Lightning checkpoints. Register trusted globals so that
-# Lightning's internal checkpoint loading succeeds.
-torch.serialization.add_safe_globals([TaskManager])
+# classes (TaskManager, numpy types, etc.) stored in Lightning checkpoints.
+# Our checkpoints are trusted, so restore the pre-2.6 default globally.
+_orig_torch_load = torch.load
+def _torch_load_compat(*args, **kwargs):
+    kwargs.setdefault('weights_only', False)
+    return _orig_torch_load(*args, **kwargs)
+torch.load = _torch_load_compat
 from model.init_train import initialize_trainer, update_config
 from model.ymt3 import YourMT3
 from config.data_presets import data_preset_single_cfg, data_preset_multi_cfg
