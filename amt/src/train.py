@@ -13,6 +13,11 @@ import argparse
 import torch
 from utils.data_modules import AMTDataModule
 from utils.task_manager import TaskManager
+
+# PyTorch 2.6 changed torch.load to default weights_only=True, blocking custom
+# classes stored in Lightning checkpoints. Register trusted globals so that
+# Lightning's internal checkpoint loading succeeds.
+torch.serialization.add_safe_globals([TaskManager])
 from model.init_train import initialize_trainer, update_config
 from model.ymt3 import YourMT3
 from config.data_presets import data_preset_single_cfg, data_preset_multi_cfg
