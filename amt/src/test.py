@@ -21,7 +21,7 @@ from utils.task_manager import TaskManager
 # Our checkpoints are trusted, so restore the pre-2.6 default globally.
 _orig_torch_load = torch.load
 def _torch_load_compat(*args, **kwargs):
-    kwargs.setdefault('weights_only', False)
+    kwargs['weights_only'] = False
     return _orig_torch_load(*args, **kwargs)
 torch.load = _torch_load_compat
 from model.init_train import initialize_trainer, update_config
