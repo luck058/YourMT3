@@ -210,11 +210,11 @@ def main():
     # last_ckpt_path can be None
     if dir_info["last_ckpt_path"] is not None:
         checkpoint = torch.load(dir_info["last_ckpt_path"], weights_only=False)
-        if 'optimizer_states' in checkpoint:
-            # Full Lightning checkpoint: restore weights + training state (epoch, step, optimizer, LR)
+        if 'optimizer_states' in checkpoint and not args.random_init_decoder:
+            # Full Lightning checkpoint with same architecture: restore weights + training state
             trainer.fit(model, ckpt_path=dir_info["last_ckpt_path"], datamodule=dm)
         else:
-            # Pretrained weights only: load with strict=False (architecture may differ) then train fresh
+            # Pretrained weights or decoder architecture change: load encoder only, train decoder fresh
             state_dict = checkpoint['state_dict']
             if args.random_init_decoder:
                 state_dict = {k: v for k, v in state_dict.items() if not k.startswith('decoder.')}
