@@ -95,6 +95,7 @@ python train.py \
     -p 2024 \
     -d pop909_aam \
     -tk mt3_full_plus \
+    -enc perceiver-tf \
     -dec "$DEC" \
     -o AdamW \
     -lr 1e-4 \
