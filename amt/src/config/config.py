@@ -64,7 +64,7 @@ model_cfg = {
             "ff_layer_type": "t5_gmlp", # {'t5_gmlp', 'moe', 'mlp', 'gmlp'}. 'moe' for mixture of experts, 'mlp' for standard transformer dense layer, 'gmlp' for simple gated MLP.
         },
         "perceiver-tf": {
-            "num_latents": 24, # number of latents in Perceiver. 24 in perceiver-tf paper.
+            "num_latents": 26, # number of latents in Perceiver. 26 for multi-t5 compatibility (26 % 13 == 0).
             "d_latent": 128, # latent dimension of Perceiver. 128 in perceiver-tf paper.
             "d_model": "q", # int or "q" or "kv". Inner-dim of sca and local/temporal self-att.
                 # "q" follows "latent_dim". "kv" follows  "d_feat". Best practice is to inc-/decrease 'd_latent', instead of 'd_model'.
