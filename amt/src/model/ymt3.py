@@ -189,12 +189,12 @@ class YourMT3(pl.LightningModule):
             else:
                 raise ValueError(f"Unknown d_model: {encoder_config['d_model']}")
 
-        # # required for PerceiverTF with attention_to_channel option
-        # if self.encoder_type == "perceiver-tf":
-        #     if encoder_config["attention_to_channel"] is True:
-        #         encoder_config["kv_dim"] = model_cfg["d_feat"]  # TODO: better readablity
-        #     else:
-        #         encoder_config["kv_dim"] = model_cfg["conv_out_channels"]
+        # required for PerceiverTF with attention_to_channel option
+        if self.encoder_type == "perceiver-tf":
+            if encoder_config["attention_to_channel"] is True:
+                encoder_config["kv_dim"] = model_cfg["d_feat"]  # TODO: better readablity
+            else:
+                encoder_config["kv_dim"] = model_cfg["conv_out_channels"]
 
         if isinstance(model_cfg["vocab_size"], str) and model_cfg["vocab_size"] == 'auto':
             model_cfg["vocab_size"] = task_manager.num_tokens
