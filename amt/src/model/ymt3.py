@@ -464,11 +464,12 @@ class YourMT3(pl.LightningModule):
         #     task_embed = self.embed_tokens(task_tokens)  # (B, task_len, 512)
         #     x = torch.cat([task_embed, x], dim=1)  # (B, task_len + 256, 512)
         enc_hs = self.encoder(inputs_embeds=x)["last_hidden_state"]  # (B, T', D)
-        enc_hs = self.pre_decoder(enc_hs)  # (B, T', D) or (B, K, T, D)
 
-        # ADD: ffnn dispatch
+        # ADD: ffnn dispatch (before pre_decoder, which may reshape to 4D for multi-t5)
         if self.decoder_type == "ffnn":
             return self._ffnn_forward(enc_hs, chord_labels)
+
+        enc_hs = self.pre_decoder(enc_hs)  # (B, T', D) or (B, K, T, D)
 
         # existing t5/multi-t5 code continues unchanged...
 
@@ -478,7 +479,7 @@ class YourMT3(pl.LightningModule):
         # else:
         #     labels = target_tokens  # (B, C, N)
         labels = target_tokens  # (B, C, N)
-        if labels.shape[1] == 1:  # for single-channel decoders, e.g. t5.
+        if self.decoder_type == "t5" and labels.shape[1] == 1:  # for single-channel decoders, e.g. t5.
             labels = labels.squeeze(1)  # (B, N)
 
         dec_input_ids = self.shift_right_fn(labels)  # t5:(B, N), multi-t5:(B, C, N)
