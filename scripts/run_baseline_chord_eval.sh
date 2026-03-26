@@ -29,7 +29,7 @@ echo "================================================"
 cd amt/src
 
 python test.py \
-    "train_pop909_aam@model.ckpt" \
+    "train_pop909_aam@last.ckpt" \
     -p 2024 \
     -d pop909_aam \
     -tk mt3_full_plus \
@@ -44,7 +44,7 @@ if [ $? -ne 0 ]; then
     echo "ERROR: Test inference failed!"
     exit 1
 fi
-echo "Inference complete at: $(date)"
+echo "Inference complete at: $(date)"r
 
 cd /home/s2286943/YourMT3
 
