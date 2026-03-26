@@ -509,6 +509,10 @@ class YourMT3(pl.LightningModule):
         Returns:
             {"logits": (B, T', n_chord_classes), "loss": scalar or None}
         """
+        # Perceiver encoder outputs (B, T, K, D); mean-pool over K to get (B, T, D)
+        if enc_hs.dim() == 4:
+            enc_hs = enc_hs.mean(dim=2)
+
         logits = self.decoder(enc_hs)  # (B, T', n_chord_classes)
 
         loss = None
@@ -824,6 +828,8 @@ class YourMT3(pl.LightningModule):
                 x_spec = self.pre_encoder(x_spec)
                 enc_hs = self.encoder(inputs_embeds=x_spec)["last_hidden_state"]
                 enc_hs = self.pre_decoder(enc_hs)
+                if enc_hs.dim() == 4:
+                    enc_hs = enc_hs.mean(dim=2)
 
             n_frames = enc_hs.shape[1]
 
@@ -905,6 +911,8 @@ class YourMT3(pl.LightningModule):
                 x_spec = self.pre_encoder(x_spec)
                 enc_hs = self.encoder(inputs_embeds=x_spec)["last_hidden_state"]
                 enc_hs = self.pre_decoder(enc_hs)
+                if enc_hs.dim() == 4:
+                    enc_hs = enc_hs.mean(dim=2)
                 logits = self.decoder(enc_hs)   # (batch_size, n_frames, n_chord_classes)
 
             n_frames = enc_hs.shape[1]
