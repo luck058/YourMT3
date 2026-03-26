@@ -32,6 +32,7 @@ python test.py \
     -p 2024 \
     -d pop909_aam \
     -tk mt3_full_plus \
+    -enc perceiver-tf \
     -dec "$DEC" \
     -pr bf16-mixed \
     -g 1 \
