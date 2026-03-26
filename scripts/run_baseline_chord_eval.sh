@@ -56,7 +56,9 @@ echo "================================================"
 echo "Step 2: Running inference on POP909 test set..."
 echo "================================================"
 
-python batch_inference.py \
+cd /home/s2286943/YourMT3/amt/src
+
+python ../../batch_inference.py \
     --input-dir /tmp \
     --file-list /tmp/pop909_test_files.txt \
     --output-dir "$POP909_MIDI_DIR" \
@@ -75,7 +77,7 @@ echo "================================================"
 echo "Step 3: Running inference on AAM test set..."
 echo "================================================"
 
-python batch_inference.py \
+python ../../batch_inference.py \
     --input-dir /tmp \
     --file-list /tmp/aam_test_files.txt \
     --output-dir "$AAM_MIDI_DIR" \
@@ -93,6 +95,8 @@ echo "AAM inference complete at: $(date)"
 echo "================================================"
 echo "Step 4: Evaluating chords on POP909..."
 echo "================================================"
+
+cd /home/s2286943/YourMT3
 
 python evaluate_chords_pop909.py \
     --midi-dir "$POP909_MIDI_DIR" \
