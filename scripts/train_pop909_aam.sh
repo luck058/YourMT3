@@ -99,13 +99,14 @@ python train.py \
     -dec "$DEC" \
     -o AdamW \
     -lr 1e-4 \
-    -bsz 2 4 \
+    -bsz 4 8 \
+    -se 30000 \
     -e 20 \
     -fe True \
     -ps 0 0 \
     -rid True \
     -pr bf16-mixed \
-    -nw 0 \
+    -nw 2 \
     -g 1 \
     -wb disabled
 
