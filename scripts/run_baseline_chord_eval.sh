@@ -60,7 +60,7 @@ python batch_inference.py \
     --input-dir /tmp \
     --file-list /tmp/pop909_test_files.txt \
     --output-dir "$POP909_MIDI_DIR" \
-    --model-name "YPTF.MoE+Multi (noPS)" \
+    --model-name "YMT3+" \
     --device cuda \
     --skip-existing
 
@@ -79,7 +79,7 @@ python batch_inference.py \
     --input-dir /tmp \
     --file-list /tmp/aam_test_files.txt \
     --output-dir "$AAM_MIDI_DIR" \
-    --model-name "YPTF.MoE+Multi (noPS)" \
+    --model-name "YMT3+" \
     --device cuda \
     --skip-existing
 
