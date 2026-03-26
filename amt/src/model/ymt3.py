@@ -897,6 +897,8 @@ class YourMT3(pl.LightningModule):
         bsz = self.shared_cfg["BSZ"]["validation"]
         total_correct = 0
         total_frames = 0
+        debug_song_ref_frames: List[np.ndarray] = []
+        debug_song_pred_frames: List[np.ndarray] = []
 
         # Accumulate per-song predictions for mir_eval (list of frame-label arrays)
         all_pred_frames: List[np.ndarray] = []
@@ -930,9 +932,31 @@ class YourMT3(pl.LightningModule):
             total_frames += pred_classes.numel()
 
             all_pred_frames.append(pred_classes.cpu().numpy())  # (batch_size, n_frames)
+            debug_song_ref_frames.append(chord_labels.cpu().numpy())
+            debug_song_pred_frames.append(pred_classes.cpu().numpy())
 
         chord_acc = total_correct / total_frames if total_frames > 0 else 0.0
         self.log('test_chord_acc', chord_acc, prog_bar=True, batch_size=n_items, sync_dist=True)
+
+        if 'POP909' in audio_file and self.global_rank == 0:
+            if not hasattr(self, '_ffnn_pop909_debug_printed'):
+                self._ffnn_pop909_debug_printed = 0
+            if self._ffnn_pop909_debug_printed < 3 and debug_song_ref_frames and debug_song_pred_frames:
+                ref_flat = np.concatenate(debug_song_ref_frames, axis=0).reshape(-1)
+                pred_flat = np.concatenate(debug_song_pred_frames, axis=0).reshape(-1)
+                ref_counts = np.bincount(ref_flat, minlength=len(CHORD_NAMES))
+                pred_counts = np.bincount(pred_flat, minlength=len(CHORD_NAMES))
+                song_id = notes_dict.get('pop909_id', os.path.basename(os.path.dirname(audio_file)))
+                print(f"\n[FFNN][POP909 debug] song={song_id}")
+                print(f"  ref_no_chord_frac={(ref_flat == NO_CHORD_IDX).mean():.4f}")
+                print(f"  pred_no_chord_frac={(pred_flat == NO_CHORD_IDX).mean():.4f}")
+                top_ref = sorted(((int(c), CHORD_NAMES[i]) for i, c in enumerate(ref_counts) if c > 0),
+                                 reverse=True)[:8]
+                top_pred = sorted(((int(c), CHORD_NAMES[i]) for i, c in enumerate(pred_counts) if c > 0),
+                                  reverse=True)[:8]
+                print("  top_ref_classes:", top_ref)
+                print("  top_pred_classes:", top_pred)
+                self._ffnn_pop909_debug_printed += 1
 
         # --- mir_eval metrics ---
         # Build song-level reference intervals from ground-truth chord_intervals
