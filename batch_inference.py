@@ -46,7 +46,7 @@ def main():
 
     # Model Configuration
     parser.add_argument('--model-name', type=str,
-                        default='YPTF.MoE+Multi (noPS)',
+                        default='YMT3+',
                         choices=['YMT3+', 'YPTF+Single (noPS)', 'YPTF+Multi (PS)',
                                 'YPTF.MoE+Multi (noPS)', 'YPTF.MoE+Multi (PS)'],
                         help='Model checkpoint to use')
