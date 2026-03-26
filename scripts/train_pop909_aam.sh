@@ -99,8 +99,8 @@ python train.py \
     -dec "$DEC" \
     -o AdamW \
     -lr 1e-4 \
-    -bsz 4 8 \
-    -e 50 \
+    -bsz 2 4 \
+    -e 20 \
     -fe True \
     -ps 0 0 \
     -rid True \
