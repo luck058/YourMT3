@@ -21,55 +21,78 @@ export PYTHONUNBUFFERED=1
 export TMPDIR=/disk/scratch/s2286943/tmp
 mkdir -p $TMPDIR
 
-# ── Step 1: Run test.py with t5 decoder to generate MIDI output ──────────────
+INDEX_DIR=/home/s2286943/YourMT3/data/yourmt3_indexes
+POP909_MIDI_DIR=/home/s2286943/baseline_chord_eval/pop909_midi
+AAM_MIDI_DIR=/home/s2286943/baseline_chord_eval/aam_midi
+mkdir -p "$POP909_MIDI_DIR"
+mkdir -p "$AAM_MIDI_DIR"
+
+# ── Step 1: Generate file lists from test index JSONs ────────────────────────
 echo "================================================"
-echo "Step 1: Running test inference (t5 decoder)..."
+echo "Step 1: Generating test file lists from index JSONs..."
 echo "================================================"
 
-cd amt/src
-
-python test.py \
-    "train_pop909_aam@last.ckpt" \
-    -p 2024 \
-    -d pop909_aam \
-    -tk mt3_full_plus \
-    -enc perceiver-tf \
-    -dec t5 \
-    -pr bf16-mixed \
-    -g 1 \
-    -w True \
-    -wb disabled
+python -c "
+import json
+for dataset, key, out in [
+    ('$INDEX_DIR/pop909_test_file_list.json', 'mix_audio_file', '/tmp/pop909_test_files.txt'),
+    ('$INDEX_DIR/aam_test_file_list.json',    'mix_audio_file', '/tmp/aam_test_files.txt'),
+]:
+    with open(dataset) as f:
+        d = json.load(f)
+    with open(out, 'w') as f:
+        for entry in d.values():
+            f.write(entry[key] + '\n')
+    print(f'Written {len(d)} files to {out}')
+"
 
 if [ $? -ne 0 ]; then
-    echo "ERROR: Test inference failed!"
+    echo "ERROR: File list generation failed!"
     exit 1
 fi
-echo "Inference complete at: $(date)"r
 
-cd /home/s2286943/YourMT3
-
-# ── Step 2: Find the MIDI output directories ──────────────────────────────────
-# test.py writes MIDI to: ../logs/2024/train_pop909_aam/model_output_{dataset}_...
-# We find the most recently created pop909 and aam output dirs.
-LOG_DIR=/home/s2286943/YourMT3/amt/logs/2024/train_pop909_aam
-
-POP909_MIDI_DIR=$(ls -td ${LOG_DIR}/model_output_pop909* 2>/dev/null | head -1)
-AAM_MIDI_DIR=$(ls -td ${LOG_DIR}/model_output_aam* 2>/dev/null | head -1)
-
-echo "POP909 MIDI dir: $POP909_MIDI_DIR"
-echo "AAM MIDI dir:    $AAM_MIDI_DIR"
-
-INDEX_DIR=/home/s2286943/YourMT3/data/yourmt3_indexes
-
-# ── Step 3: Chord evaluation on POP909 ───────────────────────────────────────
+# ── Step 2: Inference on POP909 test set ─────────────────────────────────────
 echo "================================================"
-echo "Step 3: Evaluating chords on POP909..."
+echo "Step 2: Running inference on POP909 test set..."
 echo "================================================"
 
-if [ -z "$POP909_MIDI_DIR" ]; then
-    echo "ERROR: No POP909 MIDI output directory found under $LOG_DIR"
+python batch_inference.py \
+    --input-dir /tmp \
+    --file-list /tmp/pop909_test_files.txt \
+    --output-dir "$POP909_MIDI_DIR" \
+    --model-name "YPTF.MoE+Multi (noPS)" \
+    --device cuda \
+    --skip-existing
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: POP909 inference failed!"
     exit 1
 fi
+echo "POP909 inference complete at: $(date)"
+
+# ── Step 3: Inference on AAM test set ────────────────────────────────────────
+echo "================================================"
+echo "Step 3: Running inference on AAM test set..."
+echo "================================================"
+
+python batch_inference.py \
+    --input-dir /tmp \
+    --file-list /tmp/aam_test_files.txt \
+    --output-dir "$AAM_MIDI_DIR" \
+    --model-name "YPTF.MoE+Multi (noPS)" \
+    --device cuda \
+    --skip-existing
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: AAM inference failed!"
+    exit 1
+fi
+echo "AAM inference complete at: $(date)"
+
+# ── Step 4: Chord evaluation on POP909 ───────────────────────────────────────
+echo "================================================"
+echo "Step 4: Evaluating chords on POP909..."
+echo "================================================"
 
 python evaluate_chords_pop909.py \
     --midi-dir "$POP909_MIDI_DIR" \
@@ -83,15 +106,10 @@ if [ $? -ne 0 ]; then
 fi
 echo "POP909 evaluation complete at: $(date)"
 
-# ── Step 4: Chord evaluation on AAM ──────────────────────────────────────────
+# ── Step 5: Chord evaluation on AAM ──────────────────────────────────────────
 echo "================================================"
-echo "Step 4: Evaluating chords on AAM..."
+echo "Step 5: Evaluating chords on AAM..."
 echo "================================================"
-
-if [ -z "$AAM_MIDI_DIR" ]; then
-    echo "ERROR: No AAM MIDI output directory found under $LOG_DIR"
-    exit 1
-fi
 
 python evaluate_chords_aam.py \
     --midi-dir "$AAM_MIDI_DIR" \
