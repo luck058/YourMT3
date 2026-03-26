@@ -3,7 +3,7 @@ import numpy as np
 import torch
 
 if torch.cuda.is_available():
-    TEST_BSZ = 128
+    TEST_BSZ = 32
 else:
     TEST_BSZ = 16
 # yapf: disable
@@ -143,7 +143,7 @@ shared_cfg = {
     "BSZ": { # global batch size is local_bsz * n_GPUs in DDP mode
         "train_sub": 12, #20, # sub-batch size is per CPU worker
         "train_local": 24, #40, # local batch size is per GPU in DDP mode
-        "validation": 64, # validation batch size is per GPU in DDP mode
+        "validation": 32, # validation batch size is per GPU in DDP mode
         "test": TEST_BSZ,
     },
     "AUGMENTATION": {
