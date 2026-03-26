@@ -99,7 +99,7 @@ echo "================================================"
 cd /home/s2286943/YourMT3
 
 python evaluate_chords_pop909.py \
-    --midi-dir "$POP909_MIDI_DIR" \
+    --midi-dir "$POP909_MIDI_DIR/model_output" \
     --pop909-dir /disk/scratch/s2286943/mlp_dataset/POP909-Dataset/POP909 \
     --index-file "$INDEX_DIR/pop909_test_file_list.json" \
     --out "$POP909_MIDI_DIR/chord_eval_results_pop909_baseline.json"
@@ -116,7 +116,7 @@ echo "Step 5: Evaluating chords on AAM..."
 echo "================================================"
 
 python evaluate_chords_aam.py \
-    --midi-dir "$AAM_MIDI_DIR" \
+    --midi-dir "$AAM_MIDI_DIR/model_output" \
     --annotations-dir /disk/scratch/s2286943/mlp_dataset/AAM/annotations \
     --index-file "$INDEX_DIR/aam_test_file_list.json" \
     --out "$AAM_MIDI_DIR/chord_eval_results_aam_baseline.json"
