@@ -25,7 +25,9 @@ from transformers import T5Config
 from model.t5mod import T5EncoderYMT3, T5DecoderYMT3, MultiChannelT5Decoder, FFNNChordDecoder
 from model.t5mod_helper import task_cond_dec_generate
 from utils.chord_utils import (chord_file_from_audio_file, load_chord_intervals,
-                                chord_intervals_to_frame_labels, CHORD_NAMES, NO_CHORD_IDX)
+                                chord_intervals_to_frame_labels, frame_labels_to_intervals,
+                                CHORD_NAMES, NO_CHORD_IDX)
+import mir_eval
 from model.perceiver_mod import PerceiverTFEncoder
 from model.perceiver_helper import PerceiverTFConfig
 from model.conformer_mod import ConformerYMT3Encoder
@@ -865,7 +867,18 @@ class YourMT3(pl.LightningModule):
         self.val_metrics_macro.bulk_reset()
 
     def _ffnn_test_step(self, audio_segments, notes_dict, dataloader_idx=0) -> None:
-        """Test-time evaluation for FFNNChordDecoder: same pipeline as validation."""
+        """Test-time evaluation for FFNNChordDecoder.
+
+        Computes:
+          - frame-level accuracy (test_chord_acc)
+          - mir_eval chord metrics: root, thirds, triads, tetrads, majmin, mirex
+            (test_chord_root, test_chord_thirds, test_chord_triads,
+             test_chord_tetrads, test_chord_majmin, test_chord_mirex)
+
+        The AAM contiguity fix is applied inside load_chord_intervals via
+        _load_aam_chord_file (forced prev_end alignment), matching the fix
+        applied in evaluate_chords_aam.py.
+        """
         segment_duration = self.audio_cfg["input_frames"] / self.audio_cfg["sample_rate"]
 
         chord_intervals = []
@@ -878,6 +891,9 @@ class YourMT3(pl.LightningModule):
         bsz = self.shared_cfg["BSZ"]["validation"]
         total_correct = 0
         total_frames = 0
+
+        # Accumulate per-song predictions for mir_eval (list of frame-label arrays)
+        all_pred_frames: List[np.ndarray] = []
 
         for i in range(0, n_items, bsz):
             x = audio_segments[i:i + bsz].to(self.device)
@@ -901,12 +917,62 @@ class YourMT3(pl.LightningModule):
                 np.stack(label_list, axis=0)
             ).long().to(self.device)
 
-            pred_classes = torch.argmax(logits, dim=-1)
+            pred_classes = torch.argmax(logits, dim=-1)  # (batch_size, n_frames)
             total_correct += (pred_classes == chord_labels).sum().item()
             total_frames += pred_classes.numel()
 
+            all_pred_frames.append(pred_classes.cpu().numpy())  # (batch_size, n_frames)
+
         chord_acc = total_correct / total_frames if total_frames > 0 else 0.0
         self.log('test_chord_acc', chord_acc, prog_bar=True, batch_size=n_items, sync_dist=True)
+
+        # --- mir_eval metrics ---
+        # Build song-level reference intervals from ground-truth chord_intervals
+        if chord_intervals and all_pred_frames:
+            ref_intervals = np.array([[s, e] for s, e, _ in chord_intervals], dtype=float)
+            ref_labels = [CHORD_NAMES[cls] for _, _, cls in chord_intervals]
+
+            # Concatenate all segment predictions into one flat frame sequence
+            # Shape: (n_items, n_frames) → (n_items * n_frames,)
+            pred_flat = np.concatenate(all_pred_frames, axis=0).reshape(-1)
+            frame_dur = segment_duration / (all_pred_frames[0].shape[-1])
+            est_intervals, est_labels = frame_labels_to_intervals(pred_flat, frame_dur,
+                                                                   start_time=0.0)
+
+            try:
+                duration = min(ref_intervals[-1, 1], est_intervals[-1, 1])
+
+                def _trim(ivs, lbs, dur):
+                    out_iv, out_lb = [], []
+                    for iv, lb in zip(ivs, lbs):
+                        s, e = max(iv[0], 0.0), min(iv[1], dur)
+                        if e - s > 1e-6:
+                            out_iv.append([s, e])
+                            out_lb.append(lb)
+                    return np.array(out_iv, dtype=float), out_lb
+
+                ref_intervals, ref_labels = _trim(ref_intervals, ref_labels, duration)
+                est_intervals, est_labels = _trim(est_intervals, est_labels, duration)
+
+                if len(ref_intervals) > 0 and len(est_intervals) > 0:
+                    scores = mir_eval.chord.evaluate(ref_intervals, ref_labels,
+                                                     est_intervals, est_labels)
+                    mir_eval_keys = ['root', 'thirds', 'triads', 'tetrads', 'majmin', 'mirex']
+                    # Determine dataset from audio file path
+                    if 'AAM' in audio_file:
+                        dataset_key = 'aam'
+                    else:
+                        dataset_key = 'pop909'
+                    # Accumulate per-dataset for macro-average in on_test_epoch_end
+                    if not hasattr(self, '_ffnn_mir_eval_scores'):
+                        self._ffnn_mir_eval_scores = {}
+                    if dataset_key not in self._ffnn_mir_eval_scores:
+                        self._ffnn_mir_eval_scores[dataset_key] = {k: [] for k in mir_eval_keys}
+                    for k in mir_eval_keys:
+                        if k in scores:
+                            self._ffnn_mir_eval_scores[dataset_key][k].append(float(scores[k]))
+            except Exception as e:
+                print(f"[FFNN] mir_eval failed for {audio_file}: {e}")
 
     def test_step(self, batch, batch_idx, dataloader_idx=0) -> Dict:
         if self.decoder_type == "ffnn":
@@ -1066,6 +1132,20 @@ class YourMT3(pl.LightningModule):
         for test_metrics in self.test_metrics:
             self.log_dict(test_metrics.bulk_compute(), sync_dist=True)
             test_metrics.bulk_reset()
+
+        # FFNN decoder: log macro-averaged mir_eval metrics per dataset
+        if hasattr(self, '_ffnn_mir_eval_scores'):
+            mir_eval_keys = ['root', 'thirds', 'triads', 'tetrads', 'majmin', 'mirex']
+            for dataset_key, scores_dict in self._ffnn_mir_eval_scores.items():
+                print(f"\n=== FFNN Chord Evaluation — {dataset_key.upper()} (macro-avg over "
+                      f"{len(scores_dict.get('root', []))} songs) ===")
+                for k in mir_eval_keys:
+                    vals = scores_dict.get(k, [])
+                    if vals:
+                        macro = float(np.mean(vals))
+                        print(f"  {k:10s}: {macro:.4f}")
+                        self.log(f'test_chord_{dataset_key}_{k}', macro, sync_dist=True)
+            self._ffnn_mir_eval_scores = {}
         # self.log_dict(self.test_metrics_macro.bulk_compute(), sync_dist=True)
         # self.test_metrics_macro.bulk_reset()
 

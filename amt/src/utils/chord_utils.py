@@ -177,10 +177,19 @@ def _load_aam_chord_file(path: str) -> List[Tuple[float, float, int]]:
     if not entries:
         return []
 
+    # Sort by start time (some beatinfo.arff files have out-of-order entries)
+    entries.sort(key=lambda x: x[0])
+
     intervals: List[Tuple[float, float, int]] = []
+    prev_end: Optional[float] = None
     for i, (start, chord_name) in enumerate(entries):
         end = entries[i + 1][0] if i + 1 < len(entries) else start + 1.0
+        # Force contiguous: close any floating-point gap between beats
+        if prev_end is not None:
+            start = prev_end
+        end = max(end, start + 1e-6)  # ensure strictly positive duration
         intervals.append((start, end, parse_chord_label(chord_name)))
+        prev_end = end
     return intervals
 
 
@@ -269,3 +278,48 @@ def chord_intervals_to_frame_labels(
         labels[has_coverage] = np.argmax(overlap[has_coverage], axis=1)
 
     return labels
+
+
+def frame_labels_to_intervals(
+    frame_labels: np.ndarray,
+    frame_duration: float,
+    start_time: float = 0.0,
+) -> Tuple[np.ndarray, List[str]]:
+    """
+    Convert a sequence of per-frame chord class indices into contiguous
+    (intervals, labels) suitable for ``mir_eval.chord.evaluate``.
+
+    Consecutive frames with the same class are merged into one interval.
+
+    Args:
+        frame_labels:   ``(n_frames,)`` int array of class indices (0–24)
+        frame_duration: duration of each frame in seconds
+        start_time:     absolute start time of the first frame in seconds
+
+    Returns:
+        intervals: ``np.ndarray`` of shape ``(N, 2)`` with ``[start, end]`` rows
+        labels:    list of ``N`` mir_eval chord label strings (e.g. ``'C:maj'``, ``'N'``)
+    """
+    if len(frame_labels) == 0:
+        return np.empty((0, 2), dtype=float), []
+
+    intervals = []
+    labels = []
+    seg_start = start_time
+    cur_cls = int(frame_labels[0])
+
+    for f in range(1, len(frame_labels)):
+        cls = int(frame_labels[f])
+        if cls != cur_cls:
+            seg_end = start_time + f * frame_duration
+            intervals.append([seg_start, seg_end])
+            labels.append(CHORD_NAMES[cur_cls])
+            seg_start = seg_end
+            cur_cls = cls
+
+    # final segment
+    seg_end = start_time + len(frame_labels) * frame_duration
+    intervals.append([seg_start, seg_end])
+    labels.append(CHORD_NAMES[cur_cls])
+
+    return np.array(intervals, dtype=float), labels
