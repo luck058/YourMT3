@@ -10,7 +10,7 @@ Usage:
         --index-file /home/s2286943/YourMT3/data/yourmt3_indexes/pop909_test_file_list.json \
         --out chord_eval_results.json
 
-chord_midi.txt format (already time-indexed in seconds):
+chord_audio.txt format (time-indexed to audio in seconds):
     start_sec    end_sec    chord_label
 """
 import os
@@ -136,10 +136,10 @@ def midi_to_chord_estimates(midi_path: str):
 
 def evaluate_song(midi_path: str, pop909_song_dir: str):
     """Evaluate one song. Returns dict of mir_eval scores or None on failure."""
-    chord_txt = os.path.join(pop909_song_dir, 'chord_midi.txt')
+    chord_txt = os.path.join(pop909_song_dir, 'chord_audio.txt')
 
     if not os.path.exists(chord_txt):
-        print(f"  WARNING: missing chord_midi.txt in {pop909_song_dir}, skipping.")
+        print(f"  WARNING: missing chord_audio.txt in {pop909_song_dir}, skipping.")
         return None
 
     ref_intervals, ref_labels = load_chord_annotations(chord_txt)

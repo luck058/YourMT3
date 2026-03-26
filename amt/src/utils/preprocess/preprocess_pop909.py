@@ -162,7 +162,11 @@ def preprocess_pop909(data_home: str, dataset_name: str = "pop909") -> None:
 
             if split in ('validation', 'test'):
                 audio = load_audio_file(audio_file, dtype=np.int16)
-                audio = (audio / 2**15).astype(np.float32).reshape(1, -1)
+                audio = (audio / 2**15).astype(np.float32)
+                if audio.ndim == 2:
+                    # Downmix stereo/multi-channel audio to mono before slicing.
+                    audio = audio.mean(axis=0)
+                audio = audio.reshape(1, -1)
                 segs = slice_padded_array(audio, SEG_LEN_FRAME, SEG_LEN_FRAME, pad=True)
                 segs = rearrange(segs, 'n t -> n 1 t').astype(np.float32)
                 audio_segments_file = os.path.join(song_dir, f"{song_id}_audio_segments.npy")
