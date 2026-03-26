@@ -330,7 +330,16 @@ class YourMT3(pl.LightningModule):
             self.decoder = MultiChannelT5Decoder(self.model_cfg["decoder"]["multi-t5"], t5_config)
         elif self.decoder_type == "ffnn":
             ffnn_cfg = self.model_cfg["decoder"]["ffnn"]
-            encoder_d_model = self.model_cfg["encoder"][self.encoder_type]["d_model"]
+            if self.encoder_type == "perceiver-tf":
+                # FFNN consumes the raw Perceiver latent width because this path
+                # bypasses pre_decoder. Older checkpoints were trained with the
+                # latent width (128), not the T5-style projected size (512).
+                encoder_d_model = self.model_cfg["encoder"][self.encoder_type].get(
+                    "d_latent",
+                    self.model_cfg["encoder"][self.encoder_type]["d_model"],
+                )
+            else:
+                encoder_d_model = self.model_cfg["encoder"][self.encoder_type]["d_model"]
             self.decoder = FFNNChordDecoder(
                 d_model=encoder_d_model,
                 n_chord_classes=ffnn_cfg["n_chord_classes"],
