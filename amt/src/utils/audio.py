@@ -31,6 +31,7 @@ def load_audio_file(filename: str,
 
     if file_ext == 'wav':
         with wave.open(filename, 'r') as f:
+            n_channels = f.getnchannels()
             f.setpos(start_frame_idx)
             if seg_length_sec == 0:
                 x = f.readframes(f.getnframes())
@@ -48,6 +49,12 @@ def load_audio_file(filename: str,
                 pass
             else:
                 raise NotImplementedError(f"Unsupported dtype: {dtype}")
+
+            # WAV frames are interleaved by channel. Reshape them back to
+            # (channels, frames) instead of flattening stereo into a longer
+            # pseudo-mono signal.
+            if n_channels > 1:
+                x = x.reshape(-1, n_channels).T
     else:
         raise NotImplementedError(f"Unsupported file extension: {file_ext}")
 
